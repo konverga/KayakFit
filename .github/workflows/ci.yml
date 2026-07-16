@@ -91,12 +91,26 @@ jobs:
         with:
           persist-credentials: false
 
+      # Homebrew's Python on macOS runners does not include the _tkinter
+      # extension. Use the official CPython build so GUI modules can be
+      # imported during test collection, matching the macOS release build.
+      - name: Set up Python with Tk
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
-      - name: Install dependencies
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: uv sync --locked --python "$(which python3.14)"
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
         run: uv sync --locked
 
       - name: Run test suite

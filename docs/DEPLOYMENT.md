@@ -99,7 +99,7 @@ development. Keep these three values aligned:
 
 - `app/__init__.py::__version__`;
 - `pyproject.toml` project version;
-- release tag `vMAJOR.MINOR.PATCH`.
+- release tag `MAJOR.MINOR.PATCH` (for example, `0.2.0`).
 
 While the project remains below `1.0.0`:
 
@@ -127,11 +127,12 @@ Example:
 ```bash
 git switch main
 git pull --ff-only
-git tag v0.1.0
-git push origin v0.1.0
+git tag 0.1.0
+git push origin 0.1.0
 ```
 
-Pushing a `v*` tag triggers `.github/workflows/build-release.yml`. The workflow:
+Pushing a bare semantic-version tag such as `0.1.0` triggers
+`.github/workflows/build-release.yml`. The workflow:
 
 1. builds macOS on `macos-14` using an official Python with Tcl/Tk;
 2. verifies the macOS Tcl/Tk bundle;
@@ -140,7 +141,8 @@ Pushing a `v*` tag triggers `.github/workflows/build-release.yml`. The workflow:
 5. creates or updates the tag's GitHub Release and attaches both ZIP files.
 
 Publishing through the GitHub Release UI does not trigger a build. Release
-artifacts are produced only by an authorized `v*` tag on `main`.
+artifacts are produced only by an authorized bare semantic-version tag on
+`main`.
 
 ## Release verification
 

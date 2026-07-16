@@ -84,7 +84,9 @@ a pip fallback for environments without uv; regenerate it with
    checklist items honestly (don't tick "tests pass" without running them).
 
 **Opening a PR does not build or release anything.** `build-release.yml`
-only runs on a version tag or a published Release — see section 5.
+only publishes a release when a bare semantic-version tag is pushed — see
+section 5. Manual workflow runs build test artifacts but do not publish a
+GitHub Release.
 
 ---
 
@@ -250,8 +252,8 @@ never publishes a build. To ship:
    ```bash
    git checkout main
    git pull
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag 0.2.0
+   git push origin 0.2.0
    ```
 
    Pushing the tag alone is enough — `build-release.yml` will build both
