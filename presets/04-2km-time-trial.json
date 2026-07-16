@@ -1,0 +1,8 @@
+{
+  "name": "2 km time trial",
+  "steps": [
+    {"type": "warmup", "duration": {"kind": "time", "seconds": 300}},
+    {"type": "work", "label": "2 km TT", "duration": {"kind": "distance", "meters": 2000}},
+    {"type": "cooldown", "duration": {"kind": "time", "seconds": 300}}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Pyramid 250-500-750-500-250",
+  "steps": [
+    {"type": "warmup", "duration": {"kind": "time", "seconds": 300}},
+    {"type": "work", "duration": {"kind": "distance", "meters": 250}},
+    {"type": "rest", "duration": {"kind": "time", "seconds": 90}},
+    {"type": "work", "duration": {"kind": "distance", "meters": 500}},
+    {"type": "rest", "duration": {"kind": "time", "seconds": 90}},
+    {"type": "work", "duration": {"kind": "distance", "meters": 750}},
+    {"type": "rest", "duration": {"kind": "time", "seconds": 90}},
+    {"type": "work", "duration": {"kind": "distance", "meters": 500}},
+    {"type": "rest", "duration": {"kind": "time", "seconds": 90}},
+    {"type": "work", "duration": {"kind": "distance", "meters": 250}},
+    {"type": "cooldown", "duration": {"kind": "time", "seconds": 300}}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "3 × 6 min @ Z3 / 2 min easy",
+  "steps": [
+    {"type": "warmup", "duration": {"kind": "time", "seconds": 300}},
+    {"repeat": 3, "steps": [
+      {"type": "work", "duration": {"kind": "time", "seconds": 360},
+       "target": {"metric": "hr_zone", "low": 3, "high": 3}},
+      {"type": "rest", "duration": {"kind": "time", "seconds": 120}}
+    ]},
+    {"type": "cooldown", "duration": {"kind": "time", "seconds": 300}}
+  ]
+}
