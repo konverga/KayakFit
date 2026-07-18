@@ -171,8 +171,9 @@ The summary headline and split calculations use the same `FinalizedWorkout` and
 immutable finalized metric result as FIT generation. Speed averages use active
 distance/time; speed peaks and FIT record speeds use the raw canonical
 distance/window series (`app.speed_series`, D017), while chart smoothing is
-presentation-only. Every session/lap average is bounded by its maximum, and
-splits preserve finalized centimetre/millisecond values rather than
+presentation-only and keeps the raw maximum visible. Every session/lap average
+is bounded by its maximum, and splits preserve finalized centimetre/millisecond
+values rather than
 redistributing rounded units. Decoded-FIT regression tests compare encoded fields
 with `WorkoutSummary`, including the removal of HR-only tails.
 

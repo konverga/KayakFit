@@ -144,12 +144,13 @@ instantaneous speed remains available for the resume-distance sanity cap.
 ### Chart smoothing
 
 The summary chart applies a five-record centered moving average for readability.
-That smoothing changes only the drawn line:
+That smoothing changes only the drawn line and preserves the raw maximum point
+used in the summary cards:
 
 - FIT record speed remains the unsmoothed canonical speed;
 - summary/FIT maximum speed remains the raw canonical record peak;
-- a short raw peak can therefore be higher than the highest visible smoothed
-  chart point.
+- the highest visible/hovered chart point reaches the same maximum shown in the
+  summary card.
 
 This is not a different calculation of the workout. It is a presentation filter
 over the same raw distance-derived series.

@@ -82,13 +82,29 @@ def _smooth(
     values: Sequence[float | None],
     breaks: Sequence[bool] | None = None,
     window: int = SPEED_SMOOTHING_WINDOW,
+    preserve_max: bool = False,
 ) -> list[float | None]:
     """Centered moving average that never crosses missing data or a pause.
 
     Delegates to the shared :func:`app.speed_series.smooth`; reported
-    ``max_speed`` remains the raw canonical record peak.
+    maxima remain raw record peaks. ``preserve_max`` keeps that peak visible and
+    hoverable instead of smoothing it below the value shown in the stat cards.
     """
-    return smooth(values, breaks, window)
+    smoothed = smooth(values, breaks, window)
+    if not preserve_max:
+        return smoothed
+    present = [
+        (index, value)
+        for index, value in enumerate(values)
+        if value is not None and math.isfinite(value)
+    ]
+    if not present:
+        return smoothed
+    peak = max(value for _index, value in present)
+    for index, value in present:
+        if value == peak:
+            smoothed[index] = value
+    return smoothed
 
 
 def _kmh(values: list[float | None]) -> list[float | None]:
@@ -932,7 +948,12 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
         stats, "Avg est. power", _fmt_opt(summary.avg_power),
         f"max (1 s) {_fmt_opt(float(summary.max_power) if summary.max_power else None)}",
     )
-    _stat_block(stats, "Avg stroke rate", _fmt_opt(summary.avg_spm), "spm")
+    _stat_block(
+        stats,
+        "Avg stroke rate",
+        _fmt_opt(summary.avg_spm),
+        f"spm · max {_fmt_opt(float(summary.max_spm) if summary.max_spm else None)}",
+    )
 
     details = ctk.CTkFrame(body, fg_color="transparent")
     details.pack(fill="x")
@@ -958,7 +979,11 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
             [
                 _ChartSeries(
                     "speed", "Speed", "km/h",
-                    _smooth(_kmh(summary.series_speed), summary.series_breaks),
+                    _smooth(
+                        _kmh(summary.series_speed),
+                        summary.series_breaks,
+                        preserve_max=True,
+                    ),
                     _SPEED, fmt1, floor=0.0, ceiling=25.0,
                     stats=(
                         summary.avg_speed_mps * MPS_TO_KMH
@@ -969,7 +994,11 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "power", "Est. power", "W",
-                    _smooth(summary.series_power, summary.series_breaks),
+                    _smooth(
+                        summary.series_power,
+                        summary.series_breaks,
+                        preserve_max=True,
+                    ),
                     _POWER, fmt0, floor=0.0,
                     stats=(
                         summary.avg_power,
@@ -978,7 +1007,11 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "hr", "HR", "bpm",
-                    _smooth(summary.series_hr, summary.series_breaks), _HR, fmt0,
+                    _smooth(
+                        summary.series_hr,
+                        summary.series_breaks,
+                        preserve_max=True,
+                    ), _HR, fmt0,
                     floor=0.0, ceiling=250.0,
                     stats=(
                         summary.avg_hr,
@@ -987,7 +1020,11 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "spm", "Cadence", "spm",
-                    _smooth(summary.series_spm, summary.series_breaks), _CADENCE,
+                    _smooth(
+                        summary.series_spm,
+                        summary.series_breaks,
+                        preserve_max=True,
+                    ), _CADENCE,
                     fmt0, default_on=False, floor=0.0,
                     stats=(
                         summary.avg_spm,
@@ -996,7 +1033,11 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "pull", "Pull", "N",
-                    _smooth(summary.series_pull, summary.series_breaks), _PULL,
+                    _smooth(
+                        summary.series_pull,
+                        summary.series_breaks,
+                        preserve_max=True,
+                    ), _PULL,
                     fmt0, default_on=False, floor=0.0,
                 ),
             ],

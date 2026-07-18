@@ -167,9 +167,14 @@ def test_speed_line_never_exceeds_reported_max():
     assert s.avg_speed_mps == 3.0
     assert s.max_speed_mps == 4.0  # distance-derived peak, not the 1.0 sensor
 
-    line = [v for v in _smooth(s.series_speed, s.series_breaks) if v is not None]
+    line = [
+        v
+        for v in _smooth(s.series_speed, s.series_breaks, preserve_max=True)
+        if v is not None
+    ]
     assert line, "expected a plotted speed line"
     assert all(v <= s.max_speed_mps + 1e-9 for v in line)
+    assert max(line) == s.max_speed_mps
     # A maximum is never below the average.
     assert s.max_speed_mps >= s.avg_speed_mps
 
@@ -198,6 +203,13 @@ def test_chart_smoothing_does_not_cross_segment_breaks():
     breaks = [True, False, True, False]
     assert _smooth(values, breaks, window=5) == values
     print("test_chart_smoothing_does_not_cross_segment_breaks passed")
+
+
+def test_chart_smoothing_can_preserve_authoritative_peak():
+    values = [10.0, 10.0, 20.0, 10.0, 10.0]
+    line = _smooth(values, window=5, preserve_max=True)
+
+    assert max(v for v in line if v is not None) == 20.0
 
 
 def test_brief_active_signal_gaps_do_not_fragment_chart_or_laps():

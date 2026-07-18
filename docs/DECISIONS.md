@@ -245,14 +245,17 @@ does not imply that every current code path satisfies it perfectly.
   (`app.speed_series`), not the sensor speed channels. Average is distance /
   active time. Canonical record speed is attributed active distance /
   represented active duration; maximum is its peak and FIT records carry it
-  verbatim. Chart smoothing is presentation-only. Live and batch processing use
-  the same `ActiveDistanceAccumulator` pause/resume/bridging rules.
+  verbatim. Chart smoothing is presentation-only and preserves the raw maximum
+  point so the chart does not appear to contradict the headline max. Live and
+  batch processing use the same `ActiveDistanceAccumulator` pause/resume/bridging
+  rules.
 - **Rationale:** Chart line, table averages, reported peaks, live preview and
   FIT records previously mixed sources and could contradict each other (a lap
   table reading 10.1 km/h while every plotted point sat below 10). Deriving
   everything from one channel makes the invariants hold by construction: no
-  smoothed chart point above the raw maximum, no FIT record faster than the
-  session maximum, and live active totals converge to finalized totals.
+  smoothed chart point above the raw maximum, the chart still reaches the raw
+  maximum, no FIT record faster than the session maximum, and live active totals
+  converge to finalized totals.
 - **Consequences:**
   - "Max speed" means the fastest represented record window, not a sensor
     instantaneous peak and not a smoothed chart peak.
