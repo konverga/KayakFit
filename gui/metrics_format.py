@@ -16,7 +16,9 @@ from app.stats import ZONE_FRACTIONS, zone_lower_bounds
 __all__ = [
     "ZONE_FRACTIONS",
     "compute_power",
+    "fmt_metres",
     "fmt_time",
+    "fmt_time_precise",
     "format_metrics",
     "format_pace",
     "hr_zone",
@@ -38,6 +40,31 @@ def fmt_time(seconds: Any) -> str:
     hours, rem = divmod(max(total, 0), 3600)
     minutes, secs = divmod(rem, 60)
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+def fmt_time_precise(seconds: Any) -> str:
+    """Format duration exactly to the nearest recorded millisecond."""
+    try:
+        total_ms = max(round(float(seconds) * 1000), 0)
+    except (TypeError, ValueError):
+        return "—"
+    if total_ms % 1000 == 0:
+        return fmt_time(total_ms // 1000)
+    hours, remainder_ms = divmod(total_ms, 3_600_000)
+    minutes, remainder_ms = divmod(remainder_ms, 60_000)
+    seconds_text = f"{remainder_ms / 1000:06.3f}".rstrip("0").rstrip(".")
+    return (
+        f"{hours}:{minutes:02d}:{seconds_text}"
+        if hours
+        else f"{minutes:02d}:{seconds_text}"
+    )
+
+
+def fmt_metres(distance_m: float) -> str:
+    """Format finalized centimetre precision without inventing split values."""
+    if abs(distance_m - round(distance_m)) < 0.005:
+        return f"{round(distance_m):,d} m"
+    return f"{distance_m:,.2f} m"
 
 
 def hr_zone(hr: Any, max_hr: Any = 185, zones: list[int] | None = None) -> int:

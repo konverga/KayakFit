@@ -13,7 +13,7 @@ in HR zones is accumulated over those same moving segments via
 the UI can show HR-signal coverage honestly.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -22,21 +22,15 @@ from .coerce import to_float
 from .finalized_workout import finalize_workout
 from .logger import Logger
 from .power import DEFAULT_PULL_LENGTH_M, estimate_power, normalize_pull_length
+from .speed_series import distance_derived_speed_mps
 from .stats import (
-    aggregate_metrics,
     time_in_hr_zones,
     zone_lower_bounds,
 )
 from .table import Table
+from .workout_metrics import SliceMetrics, compute_finalized_metrics
 
 logger = Logger.get_logger(name=__name__)
-
-
-def _moving_speed(speed_mps: float | None) -> float | None:
-    """Speed in m/s, or None when not meaningfully moving (matches CsvReader)."""
-    if speed_mps is None or speed_mps <= 0.3:
-        return None
-    return speed_mps
 
 
 @dataclass
@@ -45,10 +39,12 @@ class LapSummary:
 
     index: int  # 1-based lap number
     start_s: float  # offset from workout start (wall clock, seconds)
-    duration_s: float  # active-paddling timer time
-    elapsed_s: float  # step/lap wall time, including inactive rest
+    active_time_s: float
+    elapsed_time_s: float
+    pause_after_s: float
     distance_m: float
     avg_speed_mps: float | None
+    max_speed_mps: float | None
     avg_hr: float | None
     max_hr: int | None
     avg_power: float | None
@@ -60,13 +56,30 @@ class LapSummary:
     kind: str | None = None  # warmup | work | rest | cooldown | effort
     label: str | None = None  # e.g. "Work 10:00"
 
+    @property
+    def duration_s(self) -> float:
+        """Compatibility alias for active timer time."""
+        return self.active_time_s
+
+    @property
+    def elapsed_s(self) -> float:
+        """Compatibility alias for lap wall time."""
+        return self.elapsed_time_s
+
+    @property
+    def pause_time_s(self) -> float:
+        """Inactive time inside this lap, excluding the following gap."""
+        return max(self.elapsed_time_s - self.active_time_s, 0.0)
+
 
 @dataclass
 class WorkoutSummary:
     """Everything the summary screen needs, computed once from the CSV."""
 
     start_time: datetime | None
-    duration_s: float  # moving time (sum of laps)
+    active_time_s: float
+    elapsed_time_s: float
+    pause_time_s: float
     distance_m: float
     avg_speed_mps: float | None  # over moving time
     max_speed_mps: float | None
@@ -103,59 +116,59 @@ class WorkoutSummary:
         default_factory=list
     )
 
+    @property
+    def duration_s(self) -> float:
+        """Compatibility alias for active timer time."""
+        return self.active_time_s
+
 
 def _lap_summary(
-    table: Table,
     index: int,
-    record_indices: Sequence[int],
     start_time_ms: int,
     end_time_ms: int,
     timer_time_ms: int,
-    record_weights_s: Sequence[float],
     distance_m: float,
     t0_ms: int,
-    pull_length_m: float,
+    metrics: SliceMetrics,
+    pause_after_ms: int = 0,
     kind: str | None = None,
     label: str | None = None,
 ) -> LapSummary:
-    lap = table.select_rows(record_indices)
-
-    duration_s = timer_time_ms / 1000.0
-    elapsed_s = max((end_time_ms - start_time_ms) / 1000.0, 0.0)
-
-    # Shared aggregation: HR/cadence/power over strictly-positive readings,
-    # avg speed as distance/elapsed-time (see app.stats). The FIT exporter's
-    # per-lap stats go through the same function, so the splits agree.
-    m = aggregate_metrics(
-        heart_rate=lap.get_column("heart_rate"),
-        cadence=lap.get_column("cadence"),
-        pull_force=lap.get_column("pull_force"),
-        sample_weights=record_weights_s,
-        pull_length_m=pull_length_m,
-        distance_m=distance_m,
-        duration_s=duration_s,
-    )
+    active_time_s = timer_time_ms / 1000.0
+    elapsed_time_s = max((end_time_ms - start_time_ms) / 1000.0, 0.0)
     return LapSummary(
         index=index,
         start_s=(start_time_ms - t0_ms) / 1000.0,
-        duration_s=duration_s,
-        elapsed_s=elapsed_s,
+        active_time_s=active_time_s,
+        elapsed_time_s=elapsed_time_s,
+        pause_after_s=max(pause_after_ms / 1000.0, 0.0),
         distance_m=distance_m,
         avg_speed_mps=(
-            round(m["avg_speed"], 3)
-            if m["avg_speed"] is not None
+            round(metrics.avg_speed, 3)
+            if metrics.avg_speed is not None
+            else None
+        ),
+        max_speed_mps=(
+            round(metrics.max_speed, 3)
+            if metrics.max_speed is not None
             else None
         ),
         avg_hr=(
-            float(int(m["avg_heart_rate"])) if m["avg_heart_rate"] is not None else None
+            float(round(metrics.avg_heart_rate))
+            if metrics.avg_heart_rate is not None
+            else None
         ),
-        max_hr=int(m["max_heart_rate"]) if m["max_heart_rate"] is not None else None,
-        avg_power=(float(int(m["avg_power"])) if m["avg_power"] is not None else None),
-        max_power=int(m["max_power"]) if m["max_power"] is not None else None,
+        max_hr=(round(metrics.max_heart_rate) if metrics.max_heart_rate is not None else None),
+        avg_power=(
+            float(round(metrics.avg_power)) if metrics.avg_power is not None else None
+        ),
+        max_power=(round(metrics.max_power) if metrics.max_power is not None else None),
         avg_spm=(
-            float(int(m["avg_cadence"])) if m["avg_cadence"] is not None else None
+            float(round(metrics.avg_cadence))
+            if metrics.avg_cadence is not None
+            else None
         ),
-        max_spm=int(m["max_cadence"]) if m["max_cadence"] is not None else None,
+        max_spm=(round(metrics.max_cadence) if metrics.max_cadence is not None else None),
         kind=kind,
         label=label,
     )
@@ -202,13 +215,24 @@ def compute_summary(
     timestamps = finalized.timestamps_ms
     t0_ms = timestamps[0]
 
-    speeds = [to_float(v) for v in table.get_column("speed")]
     hrs = [to_float(v) for v in table.get_column("heart_rate")]
     cadences = [to_float(v) for v in table.get_column("cadence")]
     forces = [to_float(v) for v in table.get_column("pull_force")]
 
     # ---- chart series ------------------------------------------------------
-    series_speed = [_moving_speed(s) for s in speeds]
+    # The plotted speed comes from the same active-distance/time source as the
+    # lap and session averages and the reported peak (see app.speed_series),
+    # rather than the raw speed_instant sensor channel. Deriving one coherent
+    # speed story from the distance channel keeps the chart line, the average
+    # and the maximum consistent by construction -- the line can never sit
+    # above the stated max nor below the stated average, the discrepancy that
+    # produced the original report (workout_20260717_210142, laps 2-3, where
+    # the table read ~10.1 km/h while every plotted sensor point was below 10).
+    # The chart applies presentation-only smoothing on top of these canonical
+    # per-record values. Reported maximum speed remains the raw record peak, so
+    # smoothing cannot create a plotted value above it.
+    series_speed_by_index = distance_derived_speed_mps(finalized)
+    series_speed = [series_speed_by_index.get(i) for i in range(table.height)]
     series_hr = [h if h is not None and h > 0 else None for h in hrs]
     series_power = [
         (lambda p: float(p) if p is not None and p > 0 else None)(
@@ -225,40 +249,44 @@ def compute_summary(
     # separately for FIT timer events and the chart record domain.
     segments = finalized.segments
     finalized_laps = finalized.laps
+    finalized_metrics = compute_finalized_metrics(
+        table, finalized, pull_length_m=pull_length_m
+    )
     summary_start_ms = segments[0]["start_time_ms"] if segments else t0_ms
-    laps = [
-        _lap_summary(
-            table,
-            i + 1,
-            lap.record_indices,
-            lap.start_time_ms,
-            lap.end_time_ms,
-            lap.timer_time_ms,
-            lap.record_weights_s,
-            lap.distance_m,
-            summary_start_ms,
-            pull_length_m,
-            kind=lap.kind,
-            label=lap.label,
+    laps = []
+    for i, (lap, metrics) in enumerate(
+        zip(finalized_laps, finalized_metrics.laps, strict=True)
+    ):
+        next_start_ms = (
+            finalized_laps[i + 1].start_time_ms
+            if i + 1 < len(finalized_laps)
+            else finalized.end_time_ms
         )
-        for i, lap in enumerate(finalized_laps)
-    ]
+        laps.append(
+            _lap_summary(
+                i + 1,
+                lap.start_time_ms,
+                lap.end_time_ms,
+                lap.timer_time_ms,
+                lap.distance_m,
+                summary_start_ms,
+                metrics,
+                pause_after_ms=max((next_start_ms or lap.end_time_ms) - lap.end_time_ms, 0),
+                kind=lap.kind,
+                label=lap.label,
+            )
+        )
 
     # ---- totals --------------------------------------------------------------
-    duration_s = finalized.total_timer_time_ms / 1000.0
+    active_time_s = finalized.total_timer_time_ms / 1000.0
+    elapsed_time_s = finalized.total_elapsed_time_ms / 1000.0
+    pause_time_s = finalized.total_pause_time_ms / 1000.0
     distance_m = finalized.total_distance_m
     moving_indices = finalized.moving_indices
     chart_breaks = set(finalized.chart_break_indices)
     chart_start_ms = timestamps[moving_indices[0]] if moving_indices else summary_start_ms
-    moving_hrs = [hrs[i] for i in moving_indices]
-    moving_cadences = [cadences[i] for i in moving_indices]
-    moving_forces = [forces[i] for i in moving_indices]
-    moving_speeds = [speeds[i] for i in moving_indices]
-    moving_weights = [finalized.record_duration_s[i] for i in moving_indices]
-
-    # Overall averages/peaks via the shared aggregator (same rules the FIT
-    # exporter's session stats use): HR/cadence/power over strictly-positive
-    # readings, avg speed as distance / moving time.
+    # Overall averages/peaks come from the finalized aggregate shared verbatim
+    # with FIT session/lap messages.
     #
     # avg_power is the time-average of the per-second power estimates (mean of
     # products). The machine display instead shows L x mean(force) x
@@ -267,16 +295,7 @@ def compute_summary(
     # expected. max_power is the highest one-second estimate; the display's
     # "Max Power" is a sub-second within-stroke peak (~2.2x the mean) that a
     # 1 Hz log cannot reproduce.
-    totals = aggregate_metrics(
-        heart_rate=moving_hrs,
-        cadence=moving_cadences,
-        pull_force=moving_forces,
-        speed=moving_speeds,
-        sample_weights=moving_weights,
-        distance_m=distance_m,
-        duration_s=duration_s,
-        pull_length_m=pull_length_m,
-    )
+    totals = finalized_metrics.session
 
     # ---- time in HR zones ----------------------------------------------------
     # Accumulated over the same moving segments as the laps (shared
@@ -293,32 +312,34 @@ def compute_summary(
 
     return WorkoutSummary(
         start_time=datetime.fromtimestamp(summary_start_ms / 1000.0),
-        duration_s=duration_s,
+        active_time_s=active_time_s,
+        elapsed_time_s=elapsed_time_s,
+        pause_time_s=pause_time_s,
         distance_m=distance_m,
         avg_speed_mps=(
-            round(totals["avg_speed"], 3) if totals["avg_speed"] is not None else None
+            round(totals.avg_speed, 3) if totals.avg_speed is not None else None
         ),
         max_speed_mps=(
-            round(totals["max_speed"], 3) if totals["max_speed"] is not None else None
+            round(totals.max_speed, 3) if totals.max_speed is not None else None
         ),
         avg_hr=(
-            float(int(totals["avg_heart_rate"]))
-            if totals["avg_heart_rate"] is not None
+            float(round(totals.avg_heart_rate))
+            if totals.avg_heart_rate is not None
             else None
         ),
-        max_hr=int(totals["max_heart_rate"]) if totals["max_heart_rate"] is not None else None,
+        max_hr=(round(totals.max_heart_rate) if totals.max_heart_rate is not None else None),
         avg_power=(
-            float(int(totals["avg_power"])) if totals["avg_power"] is not None else None
+            float(round(totals.avg_power)) if totals.avg_power is not None else None
         ),
-        max_power=int(totals["max_power"]) if totals["max_power"] is not None else None,
+        max_power=(round(totals.max_power) if totals.max_power is not None else None),
         avg_spm=(
-            float(int(totals["avg_cadence"]))
-            if totals["avg_cadence"] is not None
+            float(round(totals.avg_cadence))
+            if totals.avg_cadence is not None
             else None
         ),
         max_spm=(
-            int(totals["max_cadence"])
-            if totals["max_cadence"] is not None
+            round(totals.max_cadence)
+            if totals.max_cadence is not None
             else None
         ),
         zone_seconds=zone_seconds,

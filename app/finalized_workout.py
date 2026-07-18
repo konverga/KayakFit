@@ -6,6 +6,7 @@ from itertools import pairwise
 from math import floor, isfinite
 from typing import Any
 
+from .active_distance import ActiveDistanceAccumulator
 from .segmentation import (
     DEFAULT_MAX_GAP_SECONDS,
     DEFAULT_STATIONARY_THRESHOLD_RECORDS,
@@ -92,6 +93,9 @@ class FinalizedWorkout:
     # Active-only cumulative distance written to each FIT record. Missing raw
     # readings stay None so exporters do not invent a measurement.
     record_cumulative_distance_m: dict[int, float | None]
+    # Active distance attributed to each represented record window. A missing
+    # value means the trailing odometer span never received a closing reading.
+    record_distance_m: dict[int, float | None]
     record_duration_s: dict[int, float]
     total_timer_time_ms: int
     total_elapsed_time_ms: int
@@ -106,6 +110,11 @@ class FinalizedWorkout:
     def end_time_ms(self) -> int | None:
         """Timestamp of the final active FIT record/STOP event."""
         return self.segments[-1]["end_time_ms"] if self.segments else None
+
+    @property
+    def total_pause_time_ms(self) -> int:
+        """Wall-clock time inside the session that was not active timer time."""
+        return max(self.total_elapsed_time_ms - self.total_timer_time_ms, 0)
 
 
 def _build_activity_domain(
@@ -177,9 +186,8 @@ def _calculate_active_distance(
     distances: list[Any],
     speeds: list[Any],
     moving_indices: list[int],
-    resume_indices: set[int],
     record_timer_ms: dict[int, int],
-) -> tuple[dict[int, float], dict[int, float | None], float]:
+) -> tuple[dict[int, float | None], dict[int, float | None], float]:
     """Attribute cumulative-distance deltas only to active record windows.
 
     The ergometer can publish a coarse cumulative-distance jump on the first
@@ -187,44 +195,54 @@ def _calculate_active_distance(
     window belongs to the new segment; the remainder accumulated while the
     activity flag was inactive must not create an impossible split speed.
     """
-    record_distance_m: dict[int, float] = {}
-    moving_set = set(moving_indices)
-    previous_valid_distance = 0.0
-    for index, value in enumerate(distances):
-        try:
-            current = float(value)
-        except (TypeError, ValueError):
-            if index in moving_set:
-                record_distance_m[index] = 0.0
-            continue
-        if index in moving_set:
-            distance_delta = max(current - previous_valid_distance, 0.0)
-            if index in resume_indices:
-                try:
-                    reported_speed = float(speeds[index])
-                except (IndexError, TypeError, ValueError):
-                    reported_speed = 0.0
-                represented_s = record_timer_ms.get(index, 0) / 1000.0
-                if not isfinite(reported_speed) or reported_speed < 0:
-                    reported_speed = 0.0
-                if represented_s > 0:
-                    distance_delta = min(
-                        distance_delta, reported_speed * represented_s
-                    )
-            record_distance_m[index] = distance_delta
-        previous_valid_distance = current
-
+    record_distance_m: dict[int, float | None] = {}
     cumulative: dict[int, float | None] = {}
-    total = 0.0
-    for index in moving_indices:
-        try:
-            float(distances[index])
-        except (IndexError, TypeError, ValueError):
-            cumulative[index] = None
+    moving_set = set(moving_indices)
+    accumulator = ActiveDistanceAccumulator()
+    pending_indices: list[int] = []
+    for index, value in enumerate(distances):
+        active = index in moving_set
+        if active:
+            pending_indices.append(index)
+        update = accumulator.update(
+            distance_m=value,
+            duration_s=record_timer_ms.get(index, 0) / 1000.0,
+            active=active,
+            reported_speed_mps=speeds[index] if index < len(speeds) else None,
+        )
+        if not active:
+            for pending_index in pending_indices:
+                record_distance_m[pending_index] = None
+                cumulative[pending_index] = None
+            pending_indices = []
             continue
-        total += record_distance_m.get(index, 0.0)
-        cumulative[index] = round(total, 2)
-    return record_distance_m, cumulative, round(sum(record_distance_m.values()), 2)
+        try:
+            has_distance = isfinite(float(value)) and float(value) >= 0
+        except (TypeError, ValueError):
+            has_distance = False
+        if not has_distance:
+            cumulative[index] = None
+        if update is None:
+            continue
+
+        remaining_distance_m = update.distance_m
+        remaining_duration_s = update.duration_s
+        for position, pending_index in enumerate(pending_indices):
+            represented_s = record_timer_ms.get(pending_index, 0) / 1000.0
+            if position == len(pending_indices) - 1 or remaining_duration_s <= 0:
+                attributed_m = remaining_distance_m
+            else:
+                attributed_m = update.distance_m * represented_s / update.duration_s
+            record_distance_m[pending_index] = attributed_m
+            remaining_distance_m -= attributed_m
+            remaining_duration_s -= represented_s
+        cumulative[index] = round(update.cumulative_distance_m, 2)
+        pending_indices = []
+
+    for pending_index in pending_indices:
+        record_distance_m[pending_index] = None
+        cumulative[pending_index] = None
+    return record_distance_m, cumulative, round(accumulator.active_distance_m, 2)
 
 
 def _build_planned_laps(
@@ -233,7 +251,7 @@ def _build_planned_laps(
     moving_indices: list[int],
     record_windows_ms: dict[int, tuple[int, int]],
     record_timer_ms: dict[int, int],
-    record_distance_m: dict[int, float],
+    record_distance_m: dict[int, float | None],
 ) -> list[FinalizedLap]:
     """Intersect active sample windows with the performed program timeline."""
     if not segments or program_steps is None:
@@ -283,7 +301,7 @@ def _build_planned_laps(
             if duration_ms > 0 and overlap_ms > 0:
                 record_indices.append(index)
                 record_weights_s.append(overlap_ms / 1000.0)
-                distance_m += record_distance_m.get(index, 0.0) * (
+                distance_m += (record_distance_m.get(index) or 0.0) * (
                     overlap_ms / duration_ms
                 )
             record_cursor += 1
@@ -308,7 +326,7 @@ def _build_free_laps(
     threshold: int,
     max_gap_ms: float,
     record_timer_ms: dict[int, int],
-    record_distance_m: dict[int, float],
+    record_distance_m: dict[int, float | None],
 ) -> list[FinalizedLap]:
     """Group exact activity runs into natural free-workout laps."""
     groups: list[list[ActivitySegment]] = []
@@ -344,7 +362,7 @@ def _build_free_laps(
             record_weights_s=tuple(
                 record_timer_ms.get(index, 0) / 1000.0 for index in indices
             ),
-            distance_m=sum(record_distance_m.get(index, 0.0) for index in indices),
+            distance_m=sum((record_distance_m.get(index) or 0.0) for index in indices),
         ))
     return laps
 
@@ -376,18 +394,17 @@ def _chart_breaks(
 def _conserve_lap_totals(
     laps: list[FinalizedLap], timer_ms: int, total_distance: float, planned: bool
 ) -> list[FinalizedLap]:
-    """Validate planned conservation and apportion centimetre rounding."""
-    if planned:
-        if sum(lap.timer_time_ms for lap in laps) != timer_ms:
-            raise ValueError(
-                "Planned v1 timeline does not cover the complete active timer domain"
-            )
-        if abs(sum(lap.distance_m for lap in laps) - total_distance) > 0.011:
-            raise ValueError(
-                "Planned v1 timeline does not cover the complete active distance"
-            )
-    if not laps or sum(lap.timer_time_ms for lap in laps) != timer_ms:
-        return [replace(lap, distance_m=round(lap.distance_m, 2)) for lap in laps]
+    """Validate lap conservation and apportion centimetre rounding."""
+    lap_timer_ms = sum(lap.timer_time_ms for lap in laps)
+    lap_distance_m = sum(lap.distance_m for lap in laps)
+    if lap_timer_ms != timer_ms:
+        label = "Planned timeline" if planned else "Free-workout laps"
+        raise ValueError(f"{label} do not cover the complete active timer domain")
+    if abs(lap_distance_m - total_distance) > 0.011:
+        label = "Planned timeline" if planned else "Free-workout laps"
+        raise ValueError(f"{label} do not cover the complete active distance")
+    if not laps:
+        return []
     exact_cents = [max(lap.distance_m, 0.0) * 100 for lap in laps]
     lap_cents = [floor(value) for value in exact_cents]
     remaining = round(total_distance * 100) - sum(lap_cents)
@@ -441,17 +458,13 @@ def finalize_workout(
         _build_activity_domain(table, timestamps, resolved)
     )
     distances = table.get_column("distance")
-    speeds = table.get_column("speed")
+    speed_column = "speed_instant" if "speed_instant" in table else "speed"
+    speeds = table.get_column(speed_column)
     record_distance_m, active_cumulative_distance_m, total_distance = (
         _calculate_active_distance(
             distances,
             speeds,
             moving_indices,
-            {
-                segment.start_idx
-                for ordinal, segment in enumerate(segments)
-                if ordinal > 0 or segment.start_idx > 0
-            },
             record_timer_ms,
         )
     )
@@ -500,6 +513,7 @@ def finalize_workout(
         chart_break_indices=tuple(sorted(chart_breaks)),
         moving_indices=tuple(moving_indices),
         record_cumulative_distance_m=active_cumulative_distance_m,
+        record_distance_m=record_distance_m,
         record_duration_s={
             index: duration_ms / 1000.0
             for index, duration_ms in record_timer_ms.items()

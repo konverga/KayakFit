@@ -60,10 +60,11 @@ class CsvReader:
 
         Returns:
             Table of workout data records (columns: timestamp, heart_rate,
-            cadence, distance, speed, pull_force, active, sample_duration).
-            ``active`` is the
-            ergometer's "actively paddling" flag (None in recordings from
-            firmware that doesn't send it).
+            cadence, distance, speed, speed_instant, pull_force, active,
+            sample_duration). ``speed`` follows ``data_points`` while
+            ``speed_instant`` is retained for resume-distance validation.
+            ``active`` is the ergometer's "actively paddling" flag (None in
+            recordings from firmware that doesn't send it).
         """
         self.logger.info(
             msg=f"Read records from {self.file_path.name} with {data_points} data points."
@@ -78,29 +79,34 @@ class CsvReader:
         # be identified locally and adjacently during capture rather than by a
         # global value-based pass over the canonical recording.
 
-        key_map = {
-            "timestamp": "timestamp",
-            "heart_rate__bpm": "heart_rate",
-            "cadence_instant__spm": "cadence",
-            "distance__m": "distance",
-            "speed_instant__mps": "speed",
-            "pull_force_instant__n": "pull_force",
-            "active_paddling": "active",
-            "window_size__s": "sample_duration",
-        }
         if data_points not in ("instant", "averaged"):
             raise CsvReadError(f"Unsupported data point mode: {data_points!r}")
-        if data_points != "instant":
-            key_map = {k.replace("_instant", ""): v for k, v in key_map.items()}
+        suffix = "_instant" if data_points == "instant" else ""
+        key_map: dict[str, tuple[str, ...]] = {
+            "timestamp": ("timestamp",),
+            "heart_rate__bpm": ("heart_rate",),
+            f"cadence{suffix}__spm": ("cadence",),
+            "distance__m": ("distance",),
+            f"speed{suffix}__mps": ("speed",),
+            f"pull_force{suffix}__n": ("pull_force",),
+            "active_paddling": ("active",),
+            "window_size__s": ("sample_duration",),
+        }
+        if data_points == "instant":
+            key_map["speed_instant__mps"] = ("speed", "speed_instant")
+        else:
+            key_map["speed_instant__mps"] = ("speed_instant",)
 
         out_columns = [
             "timestamp", "heart_rate", "cadence", "distance", "speed",
-            "pull_force", "active", "sample_duration",
+            "speed_instant", "pull_force", "active", "sample_duration",
         ]
         out_rows = self._read_rows(key_map)
         return Table(out_columns, out_rows)
 
-    def _read_rows(self, key_map: dict[str, str]) -> list[dict[str, Any]]:
+    def _read_rows(
+        self, key_map: dict[str, tuple[str, ...]]
+    ) -> list[dict[str, Any]]:
         """Stream the CSV into the reduced typed rows used by processing."""
         try:
             with open(self.file_path, encoding="utf-8", newline="") as f:
@@ -134,10 +140,12 @@ class CsvReader:
                     record: dict[str, Any] = {}
                     try:
                         for col, value in zip(header, raw, strict=True):
+                            destinations = key_map.get(col)
+                            if destinations is None:
+                                continue
                             kind = COLUMN_TYPES.get(col)
                             typed = value if kind is None else parse_value(value, kind)
-                            destination = key_map.get(col)
-                            if destination is not None:
+                            for destination in destinations:
                                 record[destination] = typed
                     except (ValueError, ArithmeticError) as e:
                         corrupt_skipped += 1

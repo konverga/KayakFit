@@ -18,7 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.summary import compute_summary
 from app.table import Table
-from gui.summary_window import _downsample_indices, _hr_zone_parts, _MultiChart, _smooth
+from gui.summary_window import (
+    _downsample_indices,
+    _hr_zone_parts,
+    _MultiChart,
+    _smooth,
+)
 
 COLUMNS = [
     "timestamp", "heart_rate", "cadence", "distance", "speed", "pull_force",
@@ -107,6 +112,13 @@ def test_two_laps_from_gap():
     assert abs(s.laps[1].duration_s - 30.0) < 1e-6
     # Moving time excludes the 60s pause.
     assert abs(s.duration_s - 60.0) < 1e-6
+    assert s.active_time_s == 60.0
+    assert s.elapsed_time_s == 120.0
+    assert s.pause_time_s == 60.0
+    assert sum(
+        lap.elapsed_time_s + lap.pause_after_s for lap in s.laps
+    ) == s.elapsed_time_s
+    assert sum(lap.active_time_s for lap in s.laps) == s.active_time_s
     # Lap 2 starts 90s after the workout start (wall clock).
     assert abs(s.laps[1].start_s - 90.0) < 1e-6
     # Each lap covers its own distance.
@@ -137,6 +149,36 @@ def test_split_speed_uses_recorded_signal_after_distance_jump():
     assert summary.laps[1].avg_speed_mps <= max(
         speed for speed in summary.series_speed if speed is not None
     )
+
+
+def test_speed_line_never_exceeds_reported_max():
+    """The plotted speed line, the average and the reported peak are one
+    coherent story from the distance channel.
+
+    Six slow seconds (2 m each) then six fast seconds (4 m each) average
+    3.0 m/s with a distance-derived peak of 4.0 m/s. The ``speed`` sensor
+    column is a misleading constant that must not influence either number.
+    The reported ``max_speed`` is the raw canonical peak. Presentation
+    smoothing cannot create a plotted point above it.
+    """
+    rows = [_row(i, distance=_cumulative_distance(i), speed=1.0) for i in range(12)]
+    s = compute_summary(Table(COLUMNS, rows))
+
+    assert s.avg_speed_mps == 3.0
+    assert s.max_speed_mps == 4.0  # distance-derived peak, not the 1.0 sensor
+
+    line = [v for v in _smooth(s.series_speed, s.series_breaks) if v is not None]
+    assert line, "expected a plotted speed line"
+    assert all(v <= s.max_speed_mps + 1e-9 for v in line)
+    # A maximum is never below the average.
+    assert s.max_speed_mps >= s.avg_speed_mps
+
+
+def _cumulative_distance(i: int) -> float:
+    """Cumulative metres at record ``i`` for 2 m/s (first 6 s) then 4 m/s."""
+    slow = min(i + 1, 6) * 2.0
+    fast = max(i - 5, 0) * 4.0
+    return slow + fast
 
 
 def test_overlapping_sample_windows_are_rejected():

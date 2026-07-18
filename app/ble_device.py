@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from bleak import BleakClient
+from bleak.backends.device import BLEDevice
 
 from .events import StatusPayload
 from .logger import Logger
@@ -37,6 +38,7 @@ class BleDevice:
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
         status_callback: Callable[[StatusPayload], None] | None = None,
+        ble_device: BLEDevice | None = None,
     ) -> None:
         """Initialize the device handler.
 
@@ -49,8 +51,11 @@ class BleDevice:
             reconnect_delay: Delay between reconnect cycles in seconds.
             status_callback: Optional callback receiving connection status events
                 (dicts with ``event`` and ``device`` keys).
+            ble_device: Already-discovered device. Supplying this avoids Bleak's
+                implicit address lookup when opening the connection.
         """
         self.address = address
+        self._ble_device = ble_device
         self.log_level = log_level
         self.connect_timeout = connect_timeout
         self.connect_retries = max(1, connect_retries)
@@ -147,7 +152,9 @@ class BleDevice:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(old.disconnect(), timeout=2.0)
         client = BleakClient(
-            address_or_ble_device=self.address,
+            address_or_ble_device=(
+                self._ble_device if self._ble_device is not None else self.address
+            ),
             timeout=self.connect_timeout,
             disconnected_callback=self._handle_disconnect,
         )

@@ -151,6 +151,11 @@ def test_decoded_fit_exactly_matches_summary() -> None:
 
         assert session["total_distance"] == summary.distance_m == 22.0
         assert session["total_timer_time"] == summary.duration_s == 6.0
+        assert session["total_elapsed_time"] == summary.elapsed_time_s == 11.0
+        assert summary.pause_time_s == 5.0
+        assert sum(
+            lap.elapsed_time_s + lap.pause_after_s for lap in summary.laps
+        ) == summary.elapsed_time_s
         assert activity["total_timer_time"] == summary.duration_s
         assert activity["num_sessions"] == 1
         assert activity["type"] == Activity.MANUAL.value
@@ -208,8 +213,68 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         assert [lap.get("avg_speed") for lap in laps] == [
             item.avg_speed_mps for item in summary.laps
         ]
+        assert [lap.get("max_speed") for lap in laps] == [
+            item.max_speed_mps for item in summary.laps
+        ]
         assert summary.series_t[0] == 0.0
         assert summary.series_breaks == [True, False, False, True, False]
+
+
+def test_speed_peaks_derive_from_distance_channel_not_instantaneous_sensor() -> None:
+    """One coherent speed story: chart, average and peak all come from the
+    distance channel, and each FIT speed matches its own record window.
+
+    The recording holds five slow seconds (2 m each) then five fast seconds
+    (4 m each): distance/time averages 3.0 m/s and the distance-derived peak is
+    4.0 m/s. A single large ``speed_instant`` blip (9.0 m/s) is planted in the
+    fast section; because the peak no longer comes from that sensor channel it
+    is ignored, so it appears in neither ``max_speed`` nor the exported record
+    speeds. The reported max is at least the average, no exported record is
+    faster than the session max, and every exported speed matches its active
+    record window.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        csv_path = Path(d) / "workout.csv"
+        config = dict(CONFIG, data_points="averaged")
+        rows = []
+        cumulative = 0.0
+        for i in range(10):
+            cumulative += 2.0 if i < 5 else 4.0
+            row = _row(i)
+            row["distance__m"] = f"{cumulative:.2f}"
+            row["speed__mps"] = "3.00"
+            row["speed_instant__mps"] = "9.00" if i == 7 else "3.00"
+            rows.append(row)
+        lines = [";".join(ALL_FIELDS)]
+        lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        save_workout_metadata(csv_path, config, "free")
+
+        table = CsvReader(str(csv_path), config).read_all("averaged")
+        summary = compute_summary(table, config=config)
+        result = FitExporter.convert_csv_to_fit(str(csv_path), config)
+        assert result["success"], result
+
+        session = _fit_data_messages(Path(result["file_path"]), "session")[0]
+        laps = _fit_data_messages(Path(result["file_path"]), "lap")
+        records = _fit_data_messages(Path(result["file_path"]), "record")
+        sensor_speeds = [record["speed"] for record in records if "speed" in record]
+
+        # Average is distance / time; peak is the raw distance-derived peak (4.0),
+        # never the 9.0 instantaneous blip.
+        assert summary.avg_speed_mps == 3.0
+        assert summary.max_speed_mps == 4.0
+        assert 9.0 not in sensor_speeds
+        assert max(sensor_speeds) == summary.max_speed_mps
+        assert sensor_speeds == [2.0] * 5 + [4.0] * 5
+
+        # Summary and FIT session agree, and the FIT file is self-consistent.
+        assert session["avg_speed"] == summary.avg_speed_mps
+        assert session["max_speed"] == summary.max_speed_mps
+        assert max(sensor_speeds) <= session["max_speed"]
+        assert all(lap["max_speed"] >= lap["avg_speed"] for lap in laps)
+        assert session["max_speed"] >= session["avg_speed"]
+        assert session["max_speed"] >= max(lap["max_speed"] for lap in laps)
 
 
 def test_resumed_distance_jump_keeps_fit_and_summary_splits_consistent() -> None:

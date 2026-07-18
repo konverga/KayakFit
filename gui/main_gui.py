@@ -30,6 +30,7 @@ from app.config import get_bool
 from app.keep_awake import ScreenAwake
 from app.logger import Logger
 from app.sound import SoundPlayer
+from app.speed_series import LiveSpeedTracker
 
 from .config_manager import ConfigManager
 from .config_window import open_config_window
@@ -103,6 +104,8 @@ class KayakFitGUI(
         self.tile_value_colors: dict[str, Any] = {}
         self._tiles_dimmed = False
         self._stats: dict[str, dict[str, Any]] = {}
+        # Live speed preview mirroring the finalized avg/max contract.
+        self._live_speed = LiveSpeedTracker()
 
         # Liveness / staleness timing (monotonic seconds).
         self._last_data_ts: float | None = None
@@ -623,6 +626,7 @@ class KayakFitGUI(
         for var in self.metric_sub_vars.values():
             var.set("")
         self._stats.clear()
+        self._live_speed = LiveSpeedTracker()
         self._latest_data = {}
         self._clear_hr_zone()
         self.lap_label.configure(text="")

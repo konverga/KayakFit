@@ -228,6 +228,118 @@ def test_sample_window_crossing_step_boundary_is_split_exactly() -> None:
     assert sum(lap.duration_s for lap in summary.laps) == summary.duration_s
 
 
+def test_centimetre_split_keeps_every_average_bounded_by_its_maximum() -> None:
+    """FIT distance quantization may not produce an avg/max inversion."""
+    table = Table(
+        COLUMNS,
+        [
+            {
+                "timestamp": T0 + 1000,
+                "heart_rate": 150,
+                "cadence": 80,
+                "distance": 0.01,
+                "speed": 0.01,
+                "pull_force": 200,
+                "active": 1,
+                "sample_duration": 1.0,
+            }
+        ],
+    )
+    steps = [
+        {"type": "work", "label": "A", "start_ms": T0, "end_ms": T0 + 500},
+        {
+            "type": "rest",
+            "label": "B",
+            "start_ms": T0 + 500,
+            "end_ms": T0 + 1000,
+        },
+    ]
+
+    summary = compute_summary(table, program_steps=steps)
+    assert sum(lap.distance_m for lap in summary.laps) == summary.distance_m == 0.01
+    assert all(
+        lap.avg_speed_mps is None
+        or (
+            lap.max_speed_mps is not None
+            and lap.avg_speed_mps <= lap.max_speed_mps
+        )
+        for lap in summary.laps
+    )
+    assert summary.avg_speed_mps is not None
+    assert summary.max_speed_mps is not None
+    assert summary.avg_speed_mps <= summary.max_speed_mps
+
+
+def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
+    columns = [*COLUMNS, "speed_instant"]
+    rows = [
+        {
+            "timestamp": T0 + 1000,
+            "heart_rate": 140,
+            "cadence": 70,
+            "distance": 4.0,
+            "speed": 2.5,
+            "speed_instant": 3.0,
+            "pull_force": 180,
+            "active": 1,
+            "sample_duration": 1,
+        },
+        {
+            "timestamp": T0 + 4000,
+            "heart_rate": 140,
+            "cadence": 70,
+            "distance": 7.0,
+            "speed": 2.5,
+            "speed_instant": 3.0,
+            "pull_force": 180,
+            "active": 1,
+            "sample_duration": 3,
+        },
+    ]
+    steps = [
+        {"type": "work", "label": "Fast", "start_ms": T0, "end_ms": T0 + 1000},
+        {
+            "type": "work",
+            "label": "Easy",
+            "start_ms": T0 + 1000,
+            "end_ms": T0 + 4000,
+        },
+    ]
+
+    summary = compute_summary(Table(columns, rows), program_steps=steps)
+
+    # Speed is one coherent story from the distance channel: averages are
+    # distance/time and peaks come from that same per-record series, never the
+    # instantaneous speed_instant sensor (which reads 3.0 here and is ignored).
+    # Lap 1 covers 4 m in 1 s (4.0 m/s), lap 2 covers 3 m in 3 s (1.0 m/s), and
+    # the session maximum is the fastest canonical record/lap speed.
+    assert [lap.avg_speed_mps for lap in summary.laps] == [4.0, 1.0]
+    assert summary.avg_speed_mps == 1.75
+    assert summary.avg_speed_mps == sum(
+        (lap.avg_speed_mps or 0.0) * lap.active_time_s for lap in summary.laps
+    ) / summary.active_time_s
+    assert summary.max_speed_mps == 4.0
+    # The hierarchy can never contradict itself: every peak is at least its own
+    # average and is drawn from distance rather than the 3.0 sensor reading.
+    lap_averages = [
+        value
+        for lap in summary.laps
+        if (value := lap.avg_speed_mps) is not None
+    ]
+    lap_maxima = [
+        value
+        for lap in summary.laps
+        if (value := lap.max_speed_mps) is not None
+    ]
+    assert len(lap_averages) == len(lap_maxima) == len(summary.laps)
+    assert all(
+        maximum >= average
+        for average, maximum in zip(lap_averages, lap_maxima, strict=True)
+    )
+    assert summary.max_speed_mps == max(lap_maxima)
+    assert summary.max_speed_mps != 3.0
+
+
 def test_terminal_planned_step_owns_the_complete_recorded_tail() -> None:
     """Natural completion may land inside a sample with a packet already buffered."""
     rows = [

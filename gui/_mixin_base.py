@@ -43,6 +43,7 @@ class GuiSharedState:
     _last_data_ts: Any
     _last_hr_ts: Any
     _latest_data: Any
+    _live_speed: Any
     _pace_distance: Any
     _primary_fg: Any
     _primary_hover: Any

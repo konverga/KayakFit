@@ -51,20 +51,28 @@ does not imply that every current code path satisfies it perfectly.
 ## D004 — Metric aggregation is domain-specific and shared
 
 - **Status:** Accepted
-- **Decision:** `app.stats.aggregate_metrics()` defines final workout averages
-  and peaks for FIT and summary.
+- **Decision:** `app.workout_metrics.compute_finalized_metrics()` produces one
+  session/lap aggregate set consumed verbatim by FIT and summary;
+  `app.stats.aggregate_metrics()` defines each slice's arithmetic.
 - **Rules:**
   - HR, cadence, and estimated power average only valid positive readings.
   - These averages use represented sample duration when available.
   - Average speed is covered distance divided by active timer time.
-  - Maximum speed is the maximum valid positive sample in the recorded
-    instant/averaged processing mode.
+  - Maximum speed is the largest canonical record speed: attributed active
+    distance divided by represented active duration (`app.speed_series`, see
+    D017), never the raw sensor speed channel.
+  - Every reported average/maximum pair satisfies `average <= maximum` before
+    FIT encoding or UI rounding.
+  - FIT speed records use that canonical unsmoothed series, so record distance,
+    represented duration and speed describe the same measurement.
+  - Integer FIT/summary averages use nearest-integer rounding, not truncation.
   - FIT-compatible limits filter values that cannot be encoded truthfully.
 - **Rationale:** Generic column means and independently repeated calculations
   created multiple sources of truth.
-- **Presentation:** Chart smoothing is rendering-only. Legend aggregates come
-  from `WorkoutSummary`, and live field selection follows the recorded
-  instant/averaged processing mode.
+- **Presentation:** Legend aggregates come from `WorkoutSummary`; live active
+  distance/time and speed use the same accumulator as finalization. Summary
+  splits show finalized distance and millisecond timing without redistributing
+  rounded display units.
 
 ## D005 — Sensor samples represent preceding time windows
 
@@ -229,6 +237,29 @@ does not imply that every current code path satisfies it perfectly.
 - **Consequences:** A complete connection is restored after the settings folder
   is recreated. Disconnect removes the vault entry. Incomplete pre-release
   entries are deleted rather than migrated.
+
+## D017 — One speed story: every speed value derives from the distance channel
+
+- **Status:** Accepted
+- **Decision:** All reported speed comes from finalized active distance
+  (`app.speed_series`), not the sensor speed channels. Average is distance /
+  active time. Canonical record speed is attributed active distance /
+  represented active duration; maximum is its peak and FIT records carry it
+  verbatim. Chart smoothing is presentation-only. Live and batch processing use
+  the same `ActiveDistanceAccumulator` pause/resume/bridging rules.
+- **Rationale:** Chart line, table averages, reported peaks, live preview and
+  FIT records previously mixed sources and could contradict each other (a lap
+  table reading 10.1 km/h while every plotted point sat below 10). Deriving
+  everything from one channel makes the invariants hold by construction: no
+  smoothed chart point above the raw maximum, no FIT record faster than the
+  session maximum, and live active totals converge to finalized totals.
+- **Consequences:**
+  - "Max speed" means the fastest represented record window, not a sensor
+    instantaneous peak and not a smoothed chart peak.
+  - Missing odometer readings are bridged over their combined active duration.
+  - Centimetre allocation at a planned boundary can put a lap average a tiny
+    fraction above its raw record peak; only that encoded edge is normalized so
+    every reported `average <= maximum`.
 
 ## Branch history and handoff
 

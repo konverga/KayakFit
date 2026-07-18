@@ -27,7 +27,8 @@ Two rules matter and were previously implemented inconsistently:
 2. **Average speed is distance-covered / elapsed-moving-time**, the physically
    correct definition, NOT a mean of the noisy per-record reported speed
    samples (which is skewed by sampling irregularity and ignores elapsed time).
-   Peak speed is the largest positive sample in the recorded processing mode.
+   Peak speed is the largest positive sample supplied by compatibility callers;
+   finalized workout metrics derive canonical record speed separately.
 
 This module lives apart from ``app.table`` (whose ``column_mean``/``column_max``
 are deliberately generic, None-skipping aggregates) and ``app.segmentation``
@@ -218,8 +219,9 @@ def aggregate_metrics(
             0 readings are treated as no signal).
         cadence: per-record cadence readings (same missing/zero handling).
         pull_force: per-record pull-force readings (same missing/zero handling).
-        speed: per-record speed readings in the selected processing mode (same
-            missing/zero handling).
+        speed: per-record readings used for peak speed by compatibility callers
+            (same missing/zero handling). Finalized workout metrics derive speed
+            from active record distance and duration instead.
         distance_m: distance covered over the slice (metres) -- the numerator
             for average speed.
         duration_s: elapsed moving time over the slice (seconds) -- the
@@ -233,7 +235,8 @@ def aggregate_metrics(
         ``max_heart_rate``, ``avg_cadence``, ``max_cadence``, ``avg_power``,
         ``max_power``, ``avg_speed``, ``max_speed``. Averages/peaks are over
         strictly-positive readings; ``avg_speed`` is ``distance_m / duration_s``
-        (None unless both are present and positive). Callers coerce types.
+        (None unless duration is positive and distance is non-negative). Callers
+        coerce types.
     """
     result: dict[str, float | None] = {
         "avg_heart_rate": None,
@@ -279,7 +282,7 @@ def aggregate_metrics(
     if (
         distance_m is not None
         and duration_s is not None
-        and distance_m > 0
+        and distance_m >= 0
         and duration_s > 0
     ):
         result["avg_speed"] = distance_m / duration_s

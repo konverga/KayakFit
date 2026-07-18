@@ -5,6 +5,8 @@ KayakFit. Read this file before changing code. Then consult the domain document
 that matches the task:
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — runtime design and data flow.
+- [DATA_TRANSFORMATIONS.md](DATA_TRANSFORMATIONS.md) — user-facing sensor,
+  summary, FIT, and Strava calculation rules.
 - [FEATURES.md](FEATURES.md) — implemented user-facing behavior and verification status.
 - [ROADMAP.md](ROADMAP.md) — open findings and prioritized work.
 - [DECISIONS.md](DECISIONS.md) — architectural rationale and invariants.

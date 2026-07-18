@@ -88,13 +88,41 @@ def test_parse_types_and_shape() -> None:
         t = CsvReader(str(p), CONFIG).read_all("instant")
         assert t.columns == [
             "timestamp", "heart_rate", "cadence", "distance", "speed",
-            "pull_force", "active", "sample_duration",
+            "speed_instant", "pull_force", "active", "sample_duration",
         ]
         assert t.height == 5
         assert isinstance(t.get_column("timestamp")[0], int)
         assert isinstance(t.get_column("distance")[0], Decimal)
         assert isinstance(t.get_column("speed")[0], Decimal)
+        assert t.get_column("speed_instant") == t.get_column("speed")
         print("  ok: typed columns (int timestamp, Decimal distance/speed)")
+
+
+def test_unused_malformed_pace_does_not_discard_sensor_row() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "w.csv"
+        row = _row(1)
+        row["pace_200m__s"] = "(0, 0)"
+        _write(p, [row])
+
+        table = CsvReader(str(p), CONFIG).read_all("averaged")
+
+        assert table.height == 1
+        assert table.get_column("distance") == [Decimal("3.20")]
+
+
+def test_instantaneous_speed_is_retained_in_averaged_mode() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "w.csv"
+        row = _row(1)
+        row["speed__mps"] = "2.50"
+        row["speed_instant__mps"] = "3.25"
+        _write(p, [row])
+
+        table = CsvReader(str(p), CONFIG).read_all("averaged")
+
+        assert table.get_column("speed") == [Decimal("2.50")]
+        assert table.get_column("speed_instant") == [Decimal("3.25")]
 
 
 def test_stationary_rows_are_preserved() -> None:

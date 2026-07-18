@@ -72,7 +72,16 @@ Important workout invariants include:
 - Planned lap timer time does not exceed lap elapsed time.
 - Planned step attribution conserves active time and active distance when the
   performed timeline covers the session.
-- FIT session/lap totals and averages match `WorkoutSummary` after decoding.
+- FIT session/lap totals, averages, and maxima match `WorkoutSummary` after
+  decoding.
+- Every session/lap average is at most its corresponding maximum, and the
+  session speed maximum is at least every lap speed maximum.
+- FIT speed records and peak speed use raw active distance / represented active
+  duration, never the sensor speed channel; chart smoothing is presentation-only.
+- Session active time equals summed lap active time. Session elapsed time equals
+  summed lap elapsed time plus explicit following gaps.
+- Split formatting preserves finalized centimetre and millisecond values rather
+  than redistributing independently rounded units.
 - Inactive distance changes do not inflate FIT/session/chart totals.
 - Every distance-bearing active FIT record has a synthetic position derived
   from its finalized cumulative distance; inactive distance cannot advance the

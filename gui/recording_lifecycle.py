@@ -21,6 +21,7 @@ import customtkinter as ctk
 
 from app import recovery
 from app.events import UiEvent
+from app.speed_series import LiveSpeedTracker
 from app.workout_paths import WorkoutPaths
 
 from .dashboard_constants import (
@@ -87,25 +88,50 @@ class RecordingLifecycleMixin(_MixinBase):
         self._last_data_ts = now
         self._latest_data = data
 
-        data_points = str(self.cfg.get("data_points", "instant"))
-        for key, value in format_metrics(
-            data, data_points, self.cfg.get("pull_length_m")
-        ).items():
-            self.metric_vars[key].set(value)
-
-        self._refresh_pace()
-
         # Running secondary stats are a preview of the final FIT domain: do not
         # include authoritative idle packets, zero/dropout readings, or ignore a
         # sample's represented duration.
+        try:
+            weight = float(data.get("window_size__s", 1))
+        except (TypeError, ValueError):
+            weight = 1.0
+        if weight <= 0:
+            weight = 1.0
+        # The speed preview uses the same active-distance accumulator and raw
+        # distance/window speeds as finalization. Idle packets advance only the
+        # odometer baseline, so live totals converge to summary and FIT totals.
+        self._live_speed.update(
+            distance_m=data.get("distance__m"),
+            duration_s=weight,
+            active=data.get("active_paddling"),
+            reported_speed_mps=data.get("speed_instant__mps"),
+        )
+        data_points = str(self.cfg.get("data_points", "instant"))
+        formatted = format_metrics(
+            data, data_points, self.cfg.get("pull_length_m")
+        )
+        formatted["time"] = fmt_time(self._live_speed.active_time_s)
+        formatted["distance"] = f"{self._live_speed.active_distance_m:,.1f}"
+        for key, value in formatted.items():
+            self.metric_vars[key].set(value)
+
+        try:
+            elapsed_s = max(float(data.get("elapsed_time__s", 0)), 0.0)
+        except (TypeError, ValueError):
+            elapsed_s = self._live_speed.active_time_s
+        elapsed_s = max(elapsed_s, self._live_speed.active_time_s)
+        pause_s = max(elapsed_s - self._live_speed.active_time_s, 0.0)
+        self.metric_sub_vars["time"].set(
+            f"elapsed {fmt_time(elapsed_s)}  ·  pause {fmt_time(pause_s)}"
+        )
+
+        self._refresh_pace()
+
         if data.get("active_paddling") != 0:
-            try:
-                weight = float(data.get("window_size__s", 1))
-            except (TypeError, ValueError):
-                weight = 1.0
-            if weight <= 0:
-                weight = 1.0
+            self._update_speed_stat()
             for key in self.metric_sub_vars:
+                if key in ("time", "speed"):
+                    continue
                 raw = self._raw_metric(key, data)
                 if raw is not None and raw > 0:
                     self._update_stat(key, raw, weight)
@@ -148,7 +174,12 @@ class RecordingLifecycleMixin(_MixinBase):
         self._refresh_pace()
 
     def _raw_metric(self, key: str, data: dict[str, Any]) -> float | None:
-        """Extract the numeric value for a stats tile, matching its display units."""
+        """Extract the numeric value for a stats tile, matching its display units.
+
+        Speed does not pass through here: its preview comes from the shared
+        ``LiveSpeedTracker`` (see ``_update_speed_stat``) so it follows the
+        finalized distance-derived contract instead of a sensor channel.
+        """
         return metric_value(
             key,
             data,
@@ -163,9 +194,20 @@ class RecordingLifecycleMixin(_MixinBase):
         st["weight"] += weight
         st["max"] = value if st["max"] is None else max(st["max"], value)
         avg = st["sum"] / st["weight"]
-        avg_label = "sample avg" if key == "speed" else "avg"
         self.metric_sub_vars[key].set(
-            f"{avg_label} {self._fmt_stat(key, avg)}  ·  max {self._fmt_stat(key, st['max'])}"
+            f"avg {self._fmt_stat(key, avg)}  ·  max {self._fmt_stat(key, st['max'])}"
+        )
+
+    def _update_speed_stat(self) -> None:
+        """Refresh the speed tile's secondary line from the live tracker."""
+        avg_mps = self._live_speed.avg_speed_mps
+        if avg_mps is None:
+            return
+        peak_mps = self._live_speed.max_speed_mps
+        shown_max_mps = peak_mps if peak_mps is not None else avg_mps
+        self.metric_sub_vars["speed"].set(
+            f"avg {self._fmt_stat('speed', avg_mps * 3.6)}"
+            f"  ·  max {self._fmt_stat('speed', shown_max_mps * 3.6)}"
         )
 
     @staticmethod
@@ -390,6 +432,7 @@ class RecordingLifecycleMixin(_MixinBase):
         for var in self.metric_sub_vars.values():
             var.set("")
         self._stats.clear()
+        self._live_speed = LiveSpeedTracker()
         self._latest_data = {}
         self._clear_hr_zone()
         self._last_data_ts = None
@@ -416,7 +459,8 @@ class RecordingLifecycleMixin(_MixinBase):
 
     def _show_summary(self, ev: dict[str, Any]) -> None:
         dist = ev.get("distance_m", 0)
-        dur = fmt_time(ev.get("duration_s", 0))
+        active = fmt_time(ev.get("active_time_s", ev.get("duration_s", 0)))
+        elapsed = fmt_time(ev.get("elapsed_time_s", ev.get("duration_s", 0)))
         points = ev.get("data_points", 0)
         self.recording.csv_path = ev.get("csv_path")
         self.recording.points = points
@@ -425,7 +469,10 @@ class RecordingLifecycleMixin(_MixinBase):
             "Partial workout retained" if self.recording.incomplete else "Workout saved"
         )
         self.summary_label.configure(
-            text=f"{outcome}   ·   {dist:,.0f} m   ·   {dur}   ·   {points} data points"
+            text=(
+                f"{outcome}   ·   {dist:,.0f} m   ·   active {active}"
+                f"   ·   elapsed {elapsed}   ·   {points} data points"
+            )
         )
         # Offer one-click actions for this workout when we have a data file.
         # Uniform right-pad on every button (they pack right-to-left) keeps the

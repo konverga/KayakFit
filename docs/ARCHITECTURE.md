@@ -1,9 +1,10 @@
 # KayakFit architecture
 
 This document describes the current system design from BLE capture through CSV,
-FIT, summary, and Strava. Design rationale is in [DECISIONS.md](DECISIONS.md),
-user-visible behavior is in [FEATURES.md](FEATURES.md), and known defects are in
-[ROADMAP.md](ROADMAP.md).
+FIT, summary, and Strava. The user-facing calculation path is documented in
+[DATA_TRANSFORMATIONS.md](DATA_TRANSFORMATIONS.md). Design rationale is in
+[DECISIONS.md](DECISIONS.md), user-visible behavior is in
+[FEATURES.md](FEATURES.md), and known defects are in [ROADMAP.md](ROADMAP.md).
 
 ## System context
 
@@ -107,6 +108,7 @@ silently change when current configuration changes.
 `app.ble_device.BleDevice` provides:
 
 - bounded connect attempts with exponential backoff;
+- reuse of an already-discovered `BLEDevice`, avoiding implicit address scans;
 - notification subscription;
 - unexpected-disconnect callbacks;
 - repeated mid-session reconnect attempts;
@@ -147,6 +149,12 @@ central positional map in `app.field_mapping` owns the protocol-to-column names.
 `app.heart_rate_monitor_bluetooth.HeartRateMonitor` uses the standard BLE Heart Rate
 Measurement characteristic and optional Battery Level characteristic. It
 decodes both 8-bit and 16-bit HR values from the flags byte.
+
+At workout startup, `WorkoutSession` resolves the configured HRM before opening
+the ergometer link. The resolved backend device is then reused for the initial
+HRM connection and reconnects, so Bleak does not need to scan for the HRM while
+another BLE connection is active. Discovery is attempted twice before the user
+is offered an ergometer-only workout.
 
 HR notifications are free-running and asynchronous. They update
 `WorkoutSession.latest_heart_rate`; they do not produce CSV rows. A failed
@@ -267,11 +275,17 @@ intervals, so timer time, metrics, and distance are apportioned conservatively.
 
 ## Statistics and power
 
-`app.stats.aggregate_metrics()` is the final FIT/summary aggregate boundary.
-HR, cadence, and estimated power use positive valid readings and sample-duration
-weights. Average speed uses distance divided by active timer time; peak speed is
-the largest valid sample in the recorded processing mode. HR-zone time is
-accumulated over active segments only, with missing-HR time presented separately.
+`app.workout_metrics.compute_finalized_metrics()` is the final FIT/summary
+aggregate boundary, using `app.stats.aggregate_metrics()` for each session/lap
+slice. HR, cadence, and estimated power use positive valid readings and
+sample-duration weights. `app.active_distance.ActiveDistanceAccumulator` owns
+active distance/time attribution for both finalization and the live dashboard.
+Speed is one story from that distance channel (`app.speed_series`, D017):
+average speed is distance divided by active timer time, while record and peak
+speed use active record distance divided by represented duration. FIT carries
+the raw canonical series; chart smoothing is presentation-only.
+HR-zone time is accumulated over active segments only, with missing-HR time
+presented separately.
 
 Power is estimated by `app.power`:
 
@@ -314,8 +328,10 @@ failed rebuild leaves a previous FIT untouched.
 ## Summary construction
 
 `app.summary.compute_summary()` consumes the same finalized workout and shared
-statistics as FIT construction. It returns headline values, splits, HR-zone
-seconds, exact emitted-record series, chart breaks, and planned step bands.
+statistics as FIT construction. It returns active, elapsed and pause totals;
+lap active/elapsed time and following gaps; headline values, HR-zone seconds,
+exact emitted-record series, chart breaks, and planned step bands. Session
+elapsed time reconciles as the sum of lap elapsed time plus following gaps.
 
 `gui.summary_window` renders that model with CustomTkinter and a plain Tk Canvas.
 The chart begins at the first emitted active record; the FIT timer can begin one

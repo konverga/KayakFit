@@ -22,6 +22,9 @@ from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
+from bleak import BleakScanner
+from bleak.backends.device import BLEDevice
+
 from . import recovery
 from .atomic_json import write_atomic_json
 from .coerce import to_float
@@ -48,6 +51,9 @@ from .worker_result import WorkerResult
 from .workout_metadata import save_workout_metadata
 from .workout_paths import WorkoutPaths
 from .write_csv import CsvWriteError, CsvWriter
+
+_HRM_DISCOVERY_ATTEMPTS = 2
+_HRM_DISCOVERY_RETRY_DELAY_S = 1.0
 
 
 class WorkoutAbortedError(Exception):
@@ -592,8 +598,65 @@ class WorkoutSession:
             self.csv_path = None
             raise CsvWriteError(f"Could not initialize workout storage: {exc}") from exc
 
+    async def _resolve_hrm_device(self, address: str) -> BLEDevice | None:
+        """Find the configured HRM before another BLE connection is active."""
+        timeout = float(self.config.get("ble_connect_timeout", 15))
+        for attempt in range(1, _HRM_DISCOVERY_ATTEMPTS + 1):
+            self.logger.info(
+                msg=f"Locating HRM at {address} "
+                f"(attempt {attempt}/{_HRM_DISCOVERY_ATTEMPTS})..."
+            )
+            try:
+                device = await BleakScanner.find_device_by_address(
+                    address, timeout=timeout
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger.warning(
+                    msg=f"HRM discovery attempt "
+                    f"{attempt}/{_HRM_DISCOVERY_ATTEMPTS} failed: {exc}"
+                )
+            else:
+                if device is not None:
+                    self.logger.info(msg=f"✓ Located HRM at {address}")
+                    return device
+                self.logger.warning(
+                    msg=f"HRM discovery attempt "
+                    f"{attempt}/{_HRM_DISCOVERY_ATTEMPTS} did not find {address}"
+                )
+
+            if attempt < _HRM_DISCOVERY_ATTEMPTS:
+                await asyncio.sleep(_HRM_DISCOVERY_RETRY_DELAY_S)
+
+        return None
+
     async def _connect_devices(self) -> None:
-        """Connect to ergometer and HRM."""
+        """Resolve the optional HRM, then connect the ergometer and HRM."""
+        hrm_address = str(self.config.get("hrm_mac", "")).strip()
+        use_hrm = bool(hrm_address) and self._hrm_enabled()
+        resolved_hrm: BLEDevice | None = None
+
+        # Resolving an address inside BleakClient.connect() triggers an implicit
+        # scan. Do that explicitly before the ergometer link is open: some macOS
+        # and Windows adapters intermittently miss the strap while another BLE
+        # connection is active.
+        if use_hrm:
+            self._emit_status(event="connecting", device="hrm")
+            resolved_hrm = await self._resolve_hrm_device(hrm_address)
+            if resolved_hrm is None:
+                self.logger.warning(msg=f"✗ Failed to locate HRM at {hrm_address}")
+                if not await self._confirm_continue_without_hrm():
+                    self._emit_status(event="absent", device="hrm")
+                    raise WorkoutAbortedError(
+                        "Workout cancelled: heart-rate monitor not reachable."
+                    )
+                self.logger.info(msg="Will continue without HRM")
+                self._emit_status(event="absent", device="hrm")
+                use_hrm = False
+        else:
+            self._emit_status(event="absent", device="hrm")
+
         self.logger.info(
             msg=f"Connecting to KayakFirst at {self.config['ergometer_mac']}..."
         )
@@ -615,14 +678,15 @@ class WorkoutSession:
         await self.ergometer.connect(callback=self._on_ergometer_data)
         self._emit_status(event="connected", device="ergometer")
 
-        if self.config.get("hrm_mac") and self._hrm_enabled():
+        if use_hrm and resolved_hrm is not None:
             try:
                 self.logger.info(
-                    msg=f"Connecting to HRM at {self.config['hrm_mac']}..."
+                    msg=f"Connecting to HRM at {hrm_address}..."
                 )
                 self._emit_status(event="connecting", device="hrm")
                 self.hrm = HeartRateMonitor(
-                    address=self.config["hrm_mac"],
+                    address=hrm_address,
+                    ble_device=resolved_hrm,
                     log_level=self.config["log_level"],
                     connect_timeout=float(self.config.get("ble_connect_timeout", 15)),
                     # Fewer attempts at startup so a missing strap surfaces the
@@ -647,8 +711,6 @@ class WorkoutSession:
                     ) from e
                 self.logger.info(msg="Will continue without HRM")
                 self._emit_status(event="absent", device="hrm")
-        else:
-            self._emit_status(event="absent", device="hrm")
 
     async def _confirm_continue_without_hrm(self) -> bool:
         """Ask the user whether to start the workout without the configured HRM.
@@ -931,12 +993,14 @@ class WorkoutSession:
                 config=self.config,
             )
             total_distance = summary.distance_m
-            total_time = summary.duration_s
+            active_time = summary.active_time_s
+            elapsed_time = summary.elapsed_time_s
 
-            mins = int(total_time // 60)
-            secs = int(total_time % 60)
+            mins = int(active_time // 60)
+            secs = int(active_time % 60)
 
-            self.logger.info(msg=f"Duration:    {mins:02d}:{secs:02d}")
+            self.logger.info(msg=f"Active time: {mins:02d}:{secs:02d}")
+            self.logger.info(msg=f"Elapsed:     {elapsed_time:.1f} s")
             self.logger.info(msg=f"Distance:    {total_distance:.1f} m")
             self.logger.info(msg=f"Data Points: {workout_df.height}")
             self.logger.info(msg="=" * 60 + "\n")
@@ -945,7 +1009,10 @@ class WorkoutSession:
                 event="summary",
                 device="session",
                 distance_m=total_distance,
-                duration_s=int(total_time),
+                duration_s=int(active_time),
+                active_time_s=active_time,
+                elapsed_time_s=elapsed_time,
+                pause_time_s=summary.pause_time_s,
                 data_points=int(workout_df.height),
                 csv_path=self.csv_path,
                 incomplete=self._persistence_error is not None,

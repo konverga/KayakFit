@@ -21,7 +21,7 @@ not describe aspirational functionality. Verification labels mean:
 | Device connection tests | `gui/device_scanner.test_connection()` | Partial: tests only the BLE link, not the expected service/protocol |
 | Per-workout person and boat weights | main toolbar → workout worker → ergometer handshake | Implemented |
 | Five-slot ergometer display configuration | `ConfigManager.DISPLAY_MAP`, settings, handshake | Implemented |
-| Instant or averaged processing mode | settings, `CsvReader.read_all()`, `gui.metrics_format` | Implemented consistently for final and live metrics |
+| Instant or averaged processing mode | settings, `CsvReader.read_all()`, `gui.metrics_format` | Primary live cadence/force/speed follows the selection; speed averages, peaks and FIT record speeds always derive from the distance channel (D017) |
 | Automatic/manual HR zones | `app/stats.py`, settings, device-status UI | Tested |
 | Logging level and interval | settings and `WorkoutSession` | Implemented |
 | Sound cues and target grace period | settings, program panel | Implemented |
@@ -137,6 +137,9 @@ recovery marker uses durable atomic replacement.
 
 ## FIT generation and summary
 
+The user-facing calculation rules and free/planned worked examples are in
+[DATA_TRANSFORMATIONS.md](DATA_TRANSFORMATIONS.md).
+
 FIT output represents an indoor kayaking activity with:
 
 - Real active ergometer sensor records, plus one metric-free GPS compatibility
@@ -154,7 +157,7 @@ FIT output represents an indoor kayaking activity with:
 
 The summary provides:
 
-- Distance and moving time.
+- Active distance plus active, elapsed, and pause time.
 - Average/maximum speed, HR, and estimated power.
 - Average cadence.
 - Selectable speed, power, HR, cadence, and pull-force charts.
@@ -165,9 +168,13 @@ The summary provides:
 - Free-workout laps or planned-step splits.
 
 The summary headline and split calculations use the same `FinalizedWorkout` and
-`aggregate_metrics()` path as FIT generation. Decoded-FIT regression tests
-compare the encoded session and lap values with `WorkoutSummary`, including the
-removal of HR-only tails.
+immutable finalized metric result as FIT generation. Speed averages use active
+distance/time; speed peaks and FIT record speeds use the raw canonical
+distance/window series (`app.speed_series`, D017), while chart smoothing is
+presentation-only. Every session/lap average is bounded by its maximum, and
+splits preserve finalized centimetre/millisecond values rather than
+redistributing rounded units. Decoded-FIT regression tests compare encoded fields
+with `WorkoutSummary`, including the removal of HR-only tails.
 
 Status: **Implemented**, with these explicit limitations:
 

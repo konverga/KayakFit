@@ -2,8 +2,8 @@
 
 Shows one recorded workout in detail: headline stats, speed / heart-rate /
 power charts over time, time in each heart-rate zone, and a per-lap splits
-table. Laps match the FIT export (same segmentation rules), so what you see
-here is what Strava will show.
+table. Laps match the FIT export (same segmentation rules), while Strava may
+recalculate or present imported workouts differently.
 
 Charts are drawn on plain ``tkinter.Canvas`` — no plotting library, so the
 packaged app stays small. All number crunching lives in :mod:`app.summary`;
@@ -23,10 +23,11 @@ import customtkinter as ctk
 
 from app.read_csv import CsvReader
 from app.segmentation import load_program_steps
+from app.speed_series import SPEED_SMOOTHING_WINDOW, smooth
 from app.summary import WorkoutSummary, compute_summary
 from app.workout_metadata import load_workout_config, load_workout_metadata
 
-from .metrics_format import fmt_time
+from .metrics_format import fmt_metres, fmt_time, fmt_time_precise
 from .window_utils import center_over_parent
 
 # (light, dark) theme colors, matching the main dashboard's palette.
@@ -80,39 +81,14 @@ def _theme(pair: tuple[str, str]) -> str:
 def _smooth(
     values: Sequence[float | None],
     breaks: Sequence[bool] | None = None,
-    window: int = 5,
+    window: int = SPEED_SMOOTHING_WINDOW,
 ) -> list[float | None]:
-    """Centered moving average that never crosses missing data or a pause."""
-    if window <= 1:
-        return list(values)
-    half = window // 2
-    out: list[float | None] = []
-    for i, v in enumerate(values):
-        if v is None:
-            out.append(None)
-            continue
-        left = max(0, i - half)
-        right = min(len(values), i + half + 1)
-        if breaks is not None:
-            for j in range(i, left - 1, -1):
-                if j < len(breaks) and breaks[j]:
-                    left = j
-                    break
-            for j in range(i + 1, right):
-                if j < len(breaks) and breaks[j]:
-                    right = j
-                    break
-        acc: list[float] = []
-        for j in range(left, right):
-            if values[j] is None:
-                if j <= i:  # gap before/at center: restart the window
-                    acc = []
-                else:  # gap after center: stop extending
-                    break
-            else:
-                acc.append(values[j])  # type: ignore[arg-type]
-        out.append(sum(acc) / len(acc) if acc else v)
-    return out
+    """Centered moving average that never crosses missing data or a pause.
+
+    Delegates to the shared :func:`app.speed_series.smooth`; reported
+    ``max_speed`` remains the raw canonical record peak.
+    """
+    return smooth(values, breaks, window)
 
 
 def _kmh(values: list[float | None]) -> list[float | None]:
@@ -726,7 +702,7 @@ def _hr_zone_parts(
 ) -> tuple[list[tuple[str, float, tuple[str, str]]], float]:
     """Return zone/no-signal seconds normalized against total moving time."""
     measured_hr_s = sum(summary.zone_seconds)
-    total = max(float(summary.duration_s), measured_hr_s)
+    total = max(float(summary.active_time_s), measured_hr_s)
     no_hr_s = max(total - measured_hr_s, 0.0)
     parts = [
         (name, secs, color)
@@ -802,11 +778,14 @@ def _build_splits_table(master: Any, summary: WorkoutSummary) -> None:
     # Program-driven workouts carry the step behind each lap; show it so a
     # rest lap the athlete paddled through is not an anonymous number.
     show_step = any(lap.label or lap.kind for lap in summary.laps)
-    headers = ["Lap", "Start", "Time", "Distance", "Speed km/h", "Avg HR", "Est. W", "SPM"]
+    show_gap = any(lap.pause_after_s > 0 for lap in summary.laps)
+    headers = ["Lap"]
     if show_step:
-        headers.insert(1, "Step")
-        headers[3:3] = ["Elapsed", "Active"]
-        headers.remove("Time")
+        headers.append("Step")
+    headers.extend(["Start", "Elapsed", "Active"])
+    if show_gap:
+        headers.append("Gap after")
+    headers.extend(["Distance", "Speed km/h", "Avg HR", "Est. W", "SPM"])
     left_cols = 2 if show_step else 1  # left-aligned leading columns
     header_font = ctk.CTkFont(size=12, weight="bold")
     cell_font = ctk.CTkFont(size=12)
@@ -822,20 +801,28 @@ def _build_splits_table(master: Any, summary: WorkoutSummary) -> None:
         frame.grid_columnconfigure(col, weight=1)
 
     def cells_for(lap: Any) -> list[str]:
-        cells = [
-            str(lap.index),
-            fmt_time(lap.start_s),
-            fmt_time(lap.duration_s),
-            f"{lap.distance_m:,.0f} m",
-            _fmt_kmh(lap.avg_speed_mps),
-            _fmt_opt(lap.avg_hr),
-            _fmt_opt(lap.avg_power),
-            _fmt_opt(lap.avg_spm),
-        ]
+        cells = [str(lap.index)]
         if show_step:
             step_text = lap.label or (lap.kind or "").capitalize() or "—"
-            cells.insert(1, step_text)
-            cells[3:3] = [fmt_time(lap.elapsed_s)]
+            cells.append(step_text)
+        cells.extend(
+            [
+                fmt_time_precise(lap.start_s),
+                fmt_time_precise(lap.elapsed_time_s),
+                fmt_time_precise(lap.active_time_s),
+            ]
+        )
+        if show_gap:
+            cells.append(fmt_time_precise(lap.pause_after_s))
+        cells.extend(
+            [
+                fmt_metres(lap.distance_m),
+                _fmt_kmh(lap.avg_speed_mps),
+                _fmt_opt(lap.avg_hr),
+                _fmt_opt(lap.avg_power),
+                _fmt_opt(lap.avg_spm),
+            ]
+        )
         return cells
 
     next_row = 0
@@ -925,8 +912,14 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
 
     stats = ctk.CTkFrame(body, fg_color="transparent")
     stats.pack(fill="x", padx=8, pady=(0, 8))
-    _stat_block(stats, "Active distance", f"{summary.distance_m:,.0f} m")
-    _stat_block(stats, "Moving time", fmt_time(summary.duration_s))
+    _stat_block(stats, "Active distance", fmt_metres(summary.distance_m))
+    _stat_block(
+        stats,
+        "Active time",
+        fmt_time_precise(summary.active_time_s),
+        f"elapsed {fmt_time_precise(summary.elapsed_time_s)}"
+        f" · pause {fmt_time_precise(summary.pause_time_s)}",
+    )
     _stat_block(
         stats, "Avg speed", _fmt_kmh(summary.avg_speed_mps),
         f"km/h · max {_fmt_kmh(summary.max_speed_mps)}",

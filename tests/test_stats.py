@@ -75,9 +75,21 @@ def test_all_missing_returns_none():
 def test_avg_speed_needs_both_inputs():
     assert aggregate_metrics(distance_m=100.0)["avg_speed"] is None
     assert aggregate_metrics(duration_s=40.0)["avg_speed"] is None
-    assert aggregate_metrics(distance_m=0.0, duration_s=40.0)["avg_speed"] is None
+    assert aggregate_metrics(distance_m=0.0, duration_s=40.0)["avg_speed"] == 0.0
     assert aggregate_metrics(distance_m=100.0, duration_s=25.0)["avg_speed"] == 4.0
     print("test_avg_speed_needs_both_inputs passed")
+
+
+def test_generic_aggregator_does_not_rewrite_an_independent_peak() -> None:
+    metrics = aggregate_metrics(
+        speed=[2.70, 2.71],
+        distance_m=10.0,
+        duration_s=3.6,
+    )
+
+    assert metrics["avg_speed"] is not None
+    assert metrics["max_speed"] == 2.71
+    assert metrics["avg_speed"] == 10.0 / 3.6
 
 
 def test_sensor_averages_are_weighted_by_sample_window():
@@ -92,6 +104,41 @@ def test_sensor_averages_are_weighted_by_sample_window():
     # Power estimates are 52 W and 104 W with the configured pull length.
     assert metrics["avg_power"] == 91.0
     print("test_sensor_averages_are_weighted_by_sample_window passed")
+
+
+def test_fit_integer_averages_use_nearest_rounding() -> None:
+    table = Table(
+        COLUMNS,
+        [
+            {
+                "timestamp": T0,
+                "heart_rate": 140,
+                "cadence": 60,
+                "distance": 2.5,
+                "speed": 2.5,
+                "pull_force": 100,
+                "active": 1,
+                "sample_duration": 1,
+            },
+            {
+                "timestamp": T0 + 1000,
+                "heart_rate": 141,
+                "cadence": 61,
+                "distance": 5.0,
+                "speed": 2.5,
+                "pull_force": 100,
+                "active": 1,
+                "sample_duration": 1,
+            },
+        ],
+    )
+    exporter = FitExporter(config={"pull_length_m": 0.623})
+
+    stats = exporter._calculate_stats(table, sample_weights=[1, 4])
+
+    assert stats["avg_heart_rate"] == 141
+    assert stats["avg_cadence"] == 61
+    assert stats["avg_power"] == 63
 
 
 # --------------------------------------------------------------------------

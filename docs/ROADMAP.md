@@ -43,8 +43,22 @@ Critical phases 1–3 started on `feature/fit-summary-source-of-truth` on
 | 2 | Planned sample-window attribution and overshoot-preserving boundaries | Completed | Full suite, Ruff and strict mypy pass |
 | 3 | Active distance and authoritative chart/live metric policy | Completed | Full suite, Ruff and strict mypy pass |
 | 4 | FIT conformance and terminal/Windows release hardening | Completed | 156 tests, Ruff and strict mypy pass |
+| 5 | FIT/summary metric coherence and peak-speed invariants | Completed | 181 tests, historical FIT audit, Ruff and strict mypy pass |
 
 Implementation log:
+
+- 2026-07-18 — Superseded the instantaneous peak-speed policy: every reported
+  speed (chart line, averages, peaks, FIT records, live preview) now derives
+  from the distance channel via `app.speed_series` (D017). The live dashboard
+  preview gained `LiveSpeedTracker` so mid-workout avg/max track the finalized
+  summary/FIT numbers instead of the raw sensor channel.
+
+- 2026-07-17 — Phase 5 briefly made instantaneous speed authoritative for FIT
+  records and peaks before the 2026-07-18 distance-derived speed policy
+  superseded it. The lasting work from this phase bounded every average by its
+  maximum, rolled lap peaks into the session, shared one finalized metric result
+  between FIT and summary, retained rows with malformed unused CSV fields, and
+  conserved displayed split totals.
 
 - 2026-07-13 — Started critical phases from the roadmap; baseline branch was
   clean at `cbc50a7`.

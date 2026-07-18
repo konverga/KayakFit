@@ -11,6 +11,8 @@ Compatible with any heart-rate monitor implementing the standard service.
 from collections.abc import Callable
 from typing import Any
 
+from bleak.backends.device import BLEDevice
+
 from .ble_device import BleDevice
 from .events import StatusPayload
 
@@ -36,6 +38,7 @@ class HeartRateMonitor(BleDevice):
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
         status_callback: Callable[[StatusPayload], None] | None = None,
+        ble_device: BLEDevice | None = None,
     ) -> None:
         """Initialize HRM handler.
 
@@ -48,9 +51,11 @@ class HeartRateMonitor(BleDevice):
             reconnect_delay: Delay between reconnect cycles in seconds.
             status_callback: Optional callback receiving connection status events
                 (dicts with ``event`` and ``device`` keys).
+            ble_device: Already-discovered HRM used to avoid an implicit scan.
         """
         super().__init__(
             address=address,
+            ble_device=ble_device,
             log_level=log_level,
             connect_timeout=connect_timeout,
             connect_retries=connect_retries,

@@ -8,8 +8,8 @@ and the main window import them from one place instead of from each other.
 # (id, label, unit, show_stats) for each dashboard tile. show_stats adds an
 # avg/max secondary line.
 TILES = [
-    ("time", "Time", "", False),
-    ("distance", "Distance", "m", False),
+    ("time", "Active time", "", True),
+    ("distance", "Active distance", "m", False),
     ("speed", "Speed", "km/h", True),
     ("pace", "Pace", "", False),
     ("stroke", "Stroke rate", "spm", True),

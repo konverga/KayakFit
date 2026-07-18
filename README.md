@@ -30,7 +30,7 @@ Runs on **macOS** and **Windows**.
   the machine display's power model
 - **Strava upload** — convert to FIT and upload automatically or on demand. FIT
   records map active ergometer distance onto a fixed Hazewinkel course so
-  Strava reports pause-aware moving time and average speed in its overview.
+  Strava can infer pauses from stationary positions in its overview.
 - **Robustness** — crash recovery for interrupted sessions, inactivity
   auto‑stop, the screen is kept awake during a workout, the HRM battery level
   is shown so a dying strap isn’t a surprise, and the Stop button stays
@@ -140,16 +140,23 @@ account). **Open folder** reveals the files in Finder/Explorer, and **Choose
 file…** adds a workout stored somewhere else to the list so the same buttons
 work on it.
 
-**Summary** opens a detail screen for a workout: headline stats (distance,
-moving time, average/max speed, heart rate, power, stroke rate), stacked
+**Summary** opens a detail screen for a workout: headline stats (active distance,
+active/elapsed/pause time, average/max speed, heart rate, power, stroke rate), stacked
 per‑metric charts — speed, power, heart rate, cadence and pull force, each
 with its own value axis on one shared time axis — time in each heart‑rate
 zone, and a per‑lap splits table. Checkboxes above the chart choose which
 metrics are shown, and hovering shows a crosshair with the exact values at
 that moment. Heart‑rate elements appear whenever the workout has HR data.
-The laps match the FIT export, so the splits are the same ones Strava shows.
+The laps match the FIT export, so Strava receives the same split structure
+(although Strava controls how it presents imported laps).
 The same screen is available from the **View summary** button on the
 "Workout saved" card right after you stop a workout.
+
+For the exact rules and worked examples, see
+[`docs/DATA_TRANSFORMATIONS.md`](docs/DATA_TRANSFORMATIONS.md). It explains
+active versus elapsed time, pause handling, speed and power calculations,
+free/planned laps, FIT fields, the synthetic GPS track, and what Strava may
+recalculate after upload.
 
 ---
 
@@ -348,6 +355,8 @@ Repository documentation is split by purpose:
 
 - [`docs/AGENTS.md`](docs/AGENTS.md) — instructions for AI assistants.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — runtime and data flow.
+- [`docs/DATA_TRANSFORMATIONS.md`](docs/DATA_TRANSFORMATIONS.md) — sensor-to-summary,
+  FIT, and Strava calculations with worked examples.
 - [`docs/FEATURES.md`](docs/FEATURES.md) — implemented user-facing features.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — prioritized open findings.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — architecture decisions and invariants.

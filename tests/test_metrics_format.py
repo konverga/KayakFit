@@ -1,6 +1,13 @@
 """Live metric-field policy regression tests."""
 
-from gui.metrics_format import format_metrics, format_pace, metric_value, target_value
+from gui.metrics_format import (
+    fmt_metres,
+    fmt_time_precise,
+    format_metrics,
+    format_pace,
+    metric_value,
+    target_value,
+)
 
 
 def _packet() -> dict[str, float]:
@@ -38,3 +45,10 @@ def test_pace_and_targets_use_selected_fields() -> None:
     assert target_value("spm", packet, data_points="instant") == 90.0
     assert target_value("pace_500", packet, data_points="averaged") == 250.0
     assert target_value("pace_500", packet, data_points="instant") == 125.0
+
+
+def test_finalized_split_formatting_preserves_recorded_precision() -> None:
+    assert fmt_time_precise(0.375) == "00:00.375"
+    assert fmt_time_precise(16.75) == "00:16.75"
+    assert fmt_metres(0.75) == "0.75 m"
+    assert fmt_metres(24.0) == "24 m"
