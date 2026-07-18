@@ -1,8 +1,8 @@
 """Workout CSV reading.
 
 Parses the semicolon-separated workout CSV into a Table, converting each cell
-to its schema type (see ``app.field_mapping``) and supporting both the
-"instant" and "averaged" data-point modes. The v1 header must match the writer
+to its schema type (see ``app.field_mapping``) and applying the fixed v1 metric
+policy. The v1 header must match the writer
 schema exactly. Recovery is local to malformed data rows (for example a
 crash-truncated final line); schema drift and majority-corrupt files raise
 ``CsvReadError``.
@@ -52,23 +52,15 @@ class CsvReader:
         self.logger = Logger.get_logger(name=__name__)
 
 
-    def read_all(self, data_points: str = "instant") -> Table:
-        """Read all records from the CSV file.
-
-        Args:
-            data_points: Type of data points to use ("instant" or "averaged").
+    def read_all(self) -> Table:
+        """Read all records from the CSV file using canonical metric channels.
 
         Returns:
-            Table of workout data records (columns: timestamp, heart_rate,
-            cadence, distance, speed, speed_instant, pull_force, active,
-            sample_duration). ``speed`` follows ``data_points`` while
-            ``speed_instant`` is retained for resume-distance validation.
-            ``active`` is the ergometer's "actively paddling" flag (None in
-            recordings from firmware that doesn't send it).
+            Table of workout data records. ``session_elapsed`` and
+            ``sample_duration`` are the only processing clock. Raw device time
+            is retained as ``device_elapsed`` / ``device_window`` for audit.
         """
-        self.logger.info(
-            msg=f"Read records from {self.file_path.name} with {data_points} data points."
-        )
+        self.logger.info(msg=f"Read records from {self.file_path.name}.")
 
         # Preserve the validated recording timeline exactly. Moving/stationary
         # classification belongs to app.segmentation; deleting low-speed rows
@@ -79,27 +71,26 @@ class CsvReader:
         # be identified locally and adjacently during capture rather than by a
         # global value-based pass over the canonical recording.
 
-        if data_points not in ("instant", "averaged"):
-            raise CsvReadError(f"Unsupported data point mode: {data_points!r}")
-        suffix = "_instant" if data_points == "instant" else ""
         key_map: dict[str, tuple[str, ...]] = {
             "timestamp": ("timestamp",),
+            "session_elapsed__s": ("session_elapsed",),
+            "sample_duration__s": ("sample_duration",),
+            "elapsed_time__s": ("device_elapsed",),
+            "window_size__s": ("device_window",),
+            "kayakfirst_timestamp": ("kayakfirst_timestamp",),
             "heart_rate__bpm": ("heart_rate",),
-            f"cadence{suffix}__spm": ("cadence",),
+            "cadence__spm": ("cadence",),
             "distance__m": ("distance",),
-            f"speed{suffix}__mps": ("speed",),
-            f"pull_force{suffix}__n": ("pull_force",),
+            "speed_instant__mps": ("speed_instant",),
+            "pull_force__n": ("pull_force",),
             "active_paddling": ("active",),
-            "window_size__s": ("sample_duration",),
         }
-        if data_points == "instant":
-            key_map["speed_instant__mps"] = ("speed", "speed_instant")
-        else:
-            key_map["speed_instant__mps"] = ("speed_instant",)
 
         out_columns = [
-            "timestamp", "heart_rate", "cadence", "distance", "speed",
-            "speed_instant", "pull_force", "active", "sample_duration",
+            "timestamp", "session_elapsed", "sample_duration",
+            "device_elapsed", "device_window", "kayakfirst_timestamp",
+            "heart_rate", "cadence", "distance", "speed_instant",
+            "pull_force", "active",
         ]
         out_rows = self._read_rows(key_map)
         return Table(out_columns, out_rows)

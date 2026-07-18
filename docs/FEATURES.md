@@ -21,7 +21,7 @@ not describe aspirational functionality. Verification labels mean:
 | Device connection tests | `gui/device_scanner.test_connection()` | Partial: tests only the BLE link, not the expected service/protocol |
 | Per-workout person and boat weights | main toolbar → workout worker → ergometer handshake | Implemented |
 | Five-slot ergometer display configuration | `ConfigManager.DISPLAY_MAP`, settings, handshake | Implemented |
-| Instant or averaged processing mode | settings, `CsvReader.read_all()`, `gui.metrics_format` | Primary live cadence/force/speed follows the selection; speed averages, peaks and FIT record speeds always derive from the distance channel (D017) |
+| Fixed reproducible metric policy | `CsvReader.read_all()`, `gui.metrics_format` | Tested; main-window sensor cards use averaged fields, while graph/summary/FIT speed uses the recorded instantaneous field (D017, D018) |
 | Automatic/manual HR zones | `app/stats.py`, settings, device-status UI | Tested |
 | Logging level and interval | settings and `WorkoutSession` | Implemented |
 | Sound cues and target grace period | settings, program panel | Implemented |
@@ -59,13 +59,14 @@ strap, or packaged operating-system build requires physical integration tests.
 
 ## Free workouts and autopause
 
-- The ergometer's `active_paddling` signal is authoritative when available.
+- The ergometer's `active_paddling` signal is required and authoritative.
 - Heart-rate notifications update the latest HR value but never create a row or
   extend workout duration.
-- Exact active runs own FIT timer START/STOP events.
-- Short inactive gaps are debounced/grouped for a stable live pause indicator,
-  natural lap, and chart rather than producing isolated dots.
-- Longer inactive runs or timestamp gaps create a new free-workout lap.
+- Canonical `session_elapsed__s` and `sample_duration__s` define record windows
+  and total elapsed time; raw device timing remains diagnostic.
+- Every exact active run owns one free lap, chart segment, and FIT timer run.
+- Every activity-flag transition updates the live pause/lap state immediately;
+  uncovered canonical time also starts a new run, with no configurable threshold.
 - Missing or invalid activity fields are rejected rather than inferred from
   other metrics.
 - A forgotten free workout is automatically stopped and saved after the
@@ -97,7 +98,8 @@ Implemented behavior:
 - Targets for HR zone, 200/500/1000 m pace, estimated power, and cadence.
 - Configurable grace period before the target badge changes state.
 - Automatic workout stop when the last step completes.
-- Durable `steps.json` timeline in the workout directory.
+- Durable `steps.json` timeline with canonical session-elapsed boundaries in the workout
+  directory.
 - One summary split/FIT lap per recorded step, with separate elapsed and active
   time. An inactive rest remains visible with blank active averages.
 - Planned step bands on time-based summary charts.
@@ -145,7 +147,7 @@ FIT output represents an indoor kayaking activity with:
 - Real active ergometer sensor records, plus one metric-free GPS compatibility
   anchor at each active-run start.
 - Timer START/STOP events for exact active runs.
-- Planned-step laps or natural free-workout laps.
+- Planned-step laps or exact active-run free-workout laps.
 - Session and lap distance, elapsed time, timer time, speed, heart rate,
   cadence, and estimated power.
 - A deterministic Hazewinkel out-and-back GPS track derived from finalized
@@ -168,22 +170,20 @@ The summary provides:
 - Free-workout laps or planned-step splits.
 
 The summary headline and split calculations use the same `FinalizedWorkout` and
-immutable finalized metric result as FIT generation. Speed averages use active
-distance/time; speed peaks and FIT record speeds use the raw canonical
-distance/window series (`app.speed_series`, D017), while chart smoothing is
-presentation-only and keeps the raw maximum visible. Every session/lap average
-is bounded by its maximum, and splits preserve finalized centimetre/millisecond
-values rather than
-redistributing rounded units. Decoded-FIT regression tests compare encoded fields
-with `WorkoutSummary`, including the removal of HR-only tails.
+immutable finalized metric result as FIT generation. Speed averages are
+represented-time-weighted active instantaneous readings; peaks and FIT record
+speeds use that same raw channel (`app.speed_series`, D017). Chart smoothing is
+presentation-only, restores the raw maximum point, and includes it in the axis.
+Every session/lap average is bounded by its maximum, and splits preserve
+finalized centimetre/millisecond values rather than redistributing rounded
+units. Decoded-FIT regression tests compare encoded fields with
+`WorkoutSummary`, including complete elapsed bounds and removal of HR-only
+metrics from active aggregates.
 
 Status: **Implemented**, with these explicit limitations:
 
-1. The chart starts at the first emitted record, while the FIT timer starts one
-   represented sample window earlier. This is an intentional visual convention,
-   not an exact timer-axis rendering.
-2. Step labels are shown in the summary but are not encoded as FIT lap names.
-3. Pull force has no corresponding FIT session/lap aggregate.
+1. Step labels are shown in the summary but are not encoded as FIT lap names.
+2. Pull force has no corresponding FIT session/lap aggregate.
 
 ## Workout history
 

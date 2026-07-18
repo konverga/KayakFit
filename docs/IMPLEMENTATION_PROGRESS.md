@@ -14,8 +14,8 @@ the single in-memory model used to construct both FIT messages and the summary.
 Every active record must have:
 
 - an explicit ergometer `active_paddling` value;
-- an explicit positive `sample_duration`;
-- a timestamp that closes the represented sample window;
+- an explicit non-negative canonical `sample_duration`;
+- a canonical session endpoint and matching epoch timestamp;
 - active-only distance attribution.
 
 Heart-rate arrival, stale speed, cadence, and distance plateaus cannot extend
@@ -52,16 +52,15 @@ missing planned timelines are errors rather than free workouts.
    atomic JSON control files, strict complete-packet admission, malformed-stream
    health signaling, and centralized configuration validation with invalid-file
    quarantine.
-10. Release metric finalization retains both selected and instantaneous speed,
+10. Release metric finalization projects one fixed canonical channel per metric,
     ignores malformed unused CSV cells, and produces one session/lap aggregate
     set for FIT and summary. Every average is bounded by its maximum, session
     peaks roll up lap peaks, and split presentation conserves displayed totals.
-11. All reported speed derives from the distance channel (`app.speed_series`,
-    D017): averages are distance / active time, peaks are the raw unsmoothed
-    distance-derived record maximum, FIT records carry the same canonical
-    series, and the live dashboard preview (`LiveSpeedTracker`) mirrors the
-    contract causally. Chart smoothing is visual only, and the instantaneous
-    sensor channel no longer feeds any reported speed value.
+11. All finalized speed uses active `speed_instant` records
+    (`app.speed_series`, D017): averages are weighted by represented active
+    intervals, peaks are raw unsmoothed maxima, and FIT records carry the same
+    channel. Main-window cards consistently use averaged device fields.
+    Distance remains an independent raw-odometer aggregate.
 
 ## Removed behavior
 
@@ -76,9 +75,9 @@ missing planned timelines are errors rather than free workouts.
 
 ## Verification strategy
 
-Tests now construct v1 records with explicit activity and sample duration.
+Tests now construct v1 records with explicit activity and elapsed intervals.
 Regression coverage includes inactive HR prefixes/tails, stale non-zero speed,
-timestamp gaps, sample windows longer than one second, inactive distance
+timestamp jitter, multi-second elapsed intervals, inactive distance
 changes, malformed schemas and steps, planned conservation, decoded FIT to
 summary parity, canonical record-speed invariants, unused malformed CSV fields,
 precision-preserving split formatting, typed worker outcomes, atomic-write failures,

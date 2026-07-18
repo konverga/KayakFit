@@ -88,8 +88,9 @@ These rules must survive every refactor:
 4. Planned workouts group active samples by performed step; they do not add
    inactive samples to averages. Fully inactive planned rests may remain visible
    with blank active statistics.
-5. Free workouts use exact activity runs for FIT timer events and debounced
-   presentation groups for user-facing laps and chart breaks.
+5. Free workouts use every exact positive-duration activity run for FIT timer
+   events, laps, live pause/lap state, and chart breaks. Uncovered canonical
+   time breaks a run; no autopause threshold is configurable.
 6. Historical processing uses the recording's `metadata.json`, not whatever
    settings happen to be current later.
 7. FIT output is written to a sibling temporary file and atomically replaces the

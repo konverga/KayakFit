@@ -277,7 +277,7 @@ class ProgramPanelMixin(_MixinBase):
             # always lands ~warn_s before the finish; fall back to a fixed
             # distance when we have no usable speed reading.
             try:
-                speed = float(self._latest_data.get("speed_instant__mps"))
+                speed = float(self._latest_data.get("speed__mps"))
             except (TypeError, ValueError):
                 speed = 0.0
             threshold = (
@@ -344,7 +344,6 @@ class ProgramPanelMixin(_MixinBase):
             data,
             max_hr,
             zones,
-            str(self.cfg.get("data_points", "instant")),
             self.cfg.get("pull_length_m"),
         )
         raw = target_status(metric, value, target.get("low"), target.get("high"))

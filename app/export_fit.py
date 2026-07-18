@@ -1,9 +1,9 @@
 """CSV -> Garmin FIT conversion for kayaking activities.
 
 Converts recorded workout data (a Table read from the workout CSV) into a
-Garmin FIT activity file via ``fit_tool``. Exact timer runs come from shared
-active/autopause detection; finalized laps are one per recorded program step
-for planned workouts and natural autopause groups for free workouts.
+Garmin FIT activity file via ``fit_tool``. Exact timer runs come from the
+recorded activity flag; finalized laps are one per recorded program step for
+planned workouts and one per exact active run for free workouts.
 Session/lap statistics use the shared finalized metric result, so the exported
 numbers always match the in-app summary screen. Each active run
 gets proper START/STOP_ALL timer events (moving vs elapsed time) for accurate
@@ -16,9 +16,7 @@ written: heart rate, cadence, power, distance and speed.
 
 import os
 import traceback
-from collections.abc import Sequence
 from datetime import datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -47,8 +45,7 @@ from .logger import Logger
 from .power import estimate_power, normalize_pull_length
 from .read_csv import CsvReader, CsvReadError
 from .segmentation import load_program_steps
-from .speed_series import distance_derived_speed_mps
-from .stats import aggregate_metrics
+from .speed_series import recorded_speed_mps
 from .table import Table
 from .workout_metadata import load_workout_config, load_workout_metadata
 from .workout_metrics import SliceMetrics, compute_finalized_metrics
@@ -109,9 +106,7 @@ class FitExporter:
             metadata = load_workout_metadata(file_path_obj)
             config = load_workout_config(file_path_obj)
             csv_reader = CsvReader(file_path=str(file_path_obj), config=config)
-            workout_df = csv_reader.read_all(
-                data_points=config.get("data_points", "instant")
-            )
+            workout_df = csv_reader.read_all()
 
             if workout_df.is_empty():
                 return {
@@ -181,7 +176,6 @@ class FitExporter:
             finalized = finalize_workout(
                 workout_df,
                 program_steps=program_steps,
-                config=self.config,
                 logger=self.logger,
             )
             if not finalized.segments:
@@ -192,8 +186,9 @@ class FitExporter:
                 finalized,
                 pull_length_m=self.config.get("pull_length_m"),
             )
-            assert finalized.start_time_ms is not None
-            fit_start = datetime.fromtimestamp(finalized.start_time_ms / 1000)
+            fit_start = datetime.fromtimestamp(
+                finalized.timeline_start_time_ms / 1000
+            )
 
             builder = FitFileBuilder(auto_define=True, min_string_size=50)
 
@@ -205,14 +200,13 @@ class FitExporter:
             )
 
             # Calculate overall statistics
-            first_start_ms = finalized.start_time_ms
-            last_end_ms = finalized.end_time_ms
-            assert first_start_ms is not None and last_end_ms is not None
+            first_start_ms = finalized.timeline_start_time_ms
+            last_end_ms = finalized.timeline_end_time_ms
             total_timer_time_ms = finalized.total_timer_time_ms
             total_elapsed_time_ms = finalized.total_elapsed_time_ms
 
-            # Timer events follow every exact active run, while laps can group
-            # brief inactive gaps (or all runs inside one planned step).
+            # Timer events follow every exact active run. Free laps use those
+            # same runs; planned laps can group multiple runs inside one step.
             for lap, metrics in zip(
                 finalized.laps, finalized_metrics.laps, strict=True
             ):
@@ -317,7 +311,7 @@ class FitExporter:
         workout_df: Table,
         finalized: FinalizedWorkout | None = None,
     ) -> tuple[ActivitySegment, ...]:
-        """Add data records (one per second) with autopause detection.
+        """Add active data records with exact activity-run timer events.
 
         Args:
             builder: FIT file builder instance.
@@ -329,19 +323,16 @@ class FitExporter:
         """
         self.logger.info(msg=f"Adding {workout_df.height} data records...")
 
-        finalized = finalized or finalize_workout(
-            workout_df, config=self.config, logger=self.logger
-        )
+        finalized = finalized or finalize_workout(workout_df, logger=self.logger)
         timestamps_ms = finalized.timestamps_ms
 
         # Materialize columns to Python lists once for fast positional access.
         heart_rate_col = workout_df.get_column_or_none("heart_rate")
         cadence_col = workout_df.get_column_or_none("cadence")
         pull_force_col = workout_df.get_column_or_none("pull_force")
-        # FIT record speed is the canonical measurement for that active sample
-        # window: attributed active distance divided by represented duration.
-        # Chart smoothing is presentation-only and never rewrites FIT data.
-        speed_by_index = distance_derived_speed_mps(finalized)
+        # FIT record speed is the same instantaneous recorded channel used by
+        # the summary and chart. Smoothing never rewrites FIT data.
+        speed_by_index = recorded_speed_mps(workout_df, finalized)
 
         # The shared finalizer supplies the exact same activity segments used by
         # the summary, so exported and displayed splits agree by construction.
@@ -430,7 +421,7 @@ class FitExporter:
             # the position before that window and keeps the paused interval at
             # the preceding cumulative distance.
             _add_gps_anchor(segment.start_time_ms, previous_distance_m)
-            for i in range(segment.start_idx, segment.end_idx + 1):
+            for i in segment.record_indices:
                 record_distance = _add_record(i)
                 if record_distance is not None and record_distance >= 0:
                     previous_distance_m = record_distance
@@ -553,84 +544,3 @@ class FitExporter:
         ):
             if value is not None:
                 setattr(message, attr, round(value) if integer else value)
-
-    def _calculate_stats(
-        self,
-        workout_df: Table,
-        speed_distance_m: float | None = None,
-        speed_duration_s: float | None = None,
-        sample_weights: Sequence[float] | None = None,
-    ) -> dict[str, int | Decimal | None]:
-        """Calculate statistics from workout data.
-
-        Compatibility helper for callers that need one isolated aggregate.
-        Normal FIT generation uses :mod:`app.workout_metrics` to finalize the
-        complete session/lap hierarchy once for both FIT and summary.
-
-        Args:
-            workout_df: Table of workout data points.
-            speed_distance_m: Distance covered over this slice (metres), the
-                numerator for average speed. When omitted, ``avg_speed`` is None.
-            speed_duration_s: Elapsed moving time over this slice (seconds), the
-                denominator for average speed.
-            sample_weights: Optional per-row represented durations in seconds.
-
-        Returns:
-            Dictionary of calculated statistics (int or Decimal values only, no
-            floats), so the values drop straight into FIT's typed fields.
-        """
-        stats: dict[str, int | Decimal | None] = {
-            "distance": None,
-            "avg_heart_rate": None,
-            "max_heart_rate": None,
-            "avg_cadence": None,
-            "max_cadence": None,
-            "avg_power": None,
-            "max_power": None,
-            "avg_speed": None,
-            "max_speed": None,
-        }
-
-        if workout_df.height == 0:
-            return stats
-
-        if speed_distance_m is not None:
-            stats["distance"] = Decimal(str(speed_distance_m))
-        elif "distance" in workout_df.columns:
-            last_row = workout_df.row(-1)
-            if last_row.get("distance") is not None:
-                val = last_row["distance"]
-                stats["distance"] = Decimal(str(val)) if isinstance(val, float) else val
-
-        metrics = aggregate_metrics(
-            heart_rate=workout_df.get_column_or_none("heart_rate"),
-            cadence=workout_df.get_column_or_none("cadence"),
-            pull_force=workout_df.get_column_or_none("pull_force"),
-            speed=workout_df.get_column_or_none(
-                "speed_instant" if "speed_instant" in workout_df else "speed"
-            ),
-            sample_weights=sample_weights,
-            distance_m=speed_distance_m,
-            duration_s=speed_duration_s,
-            pull_length_m=normalize_pull_length(self.config.get("pull_length_m")),
-        )
-
-        # Coerce to FIT's typed fields: integer bpm/spm/W, Decimal m/s.
-        if metrics["avg_heart_rate"] is not None:
-            stats["avg_heart_rate"] = round(metrics["avg_heart_rate"])
-        if metrics["max_heart_rate"] is not None:
-            stats["max_heart_rate"] = round(metrics["max_heart_rate"])
-        if metrics["avg_cadence"] is not None:
-            stats["avg_cadence"] = round(metrics["avg_cadence"])
-        if metrics["max_cadence"] is not None:
-            stats["max_cadence"] = round(metrics["max_cadence"])
-        if metrics["avg_power"] is not None:
-            stats["avg_power"] = round(metrics["avg_power"])
-        if metrics["max_power"] is not None:
-            stats["max_power"] = round(metrics["max_power"])
-        if metrics["avg_speed"] is not None:
-            stats["avg_speed"] = Decimal(str(metrics["avg_speed"]))
-        if metrics["max_speed"] is not None:
-            stats["max_speed"] = Decimal(str(metrics["max_speed"]))
-
-        return stats

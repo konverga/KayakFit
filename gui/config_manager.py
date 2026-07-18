@@ -107,15 +107,7 @@ class ConfigManager:
         "hrm_connect_retries": 1,
         "hrm_stale_timeout": 10,
         "data_stall_timeout": 8,
-        # Autopause / lap detection thresholds (shared by the live UI and the
-        # FIT exporter). A gap larger than autopause_gap_seconds between records
-        # is treated as a pause, preventing a lap from spanning a long stop.
-        "autopause_stationary_threshold_records": 5,
-        "autopause_gap_seconds": 5,
         "auto_upload": "no",
-        # Stroke-averaged force/cadence are the inputs used by the calibrated
-        # power model and most closely reproduce the ergometer display.
-        "data_points": "averaged",
         # End (and save) a workout after this many minutes without forward
         # movement, so a forgotten session doesn't become a multi-hour activity.
         # 0 disables it.
@@ -194,8 +186,6 @@ class ConfigManager:
             "hrm_connect_retries": (int, 1, 20),
             "hrm_stale_timeout": (float, 0, 300),
             "data_stall_timeout": (float, 1, 300),
-            "autopause_stationary_threshold_records": (int, 1, 120),
-            "autopause_gap_seconds": (float, 0, 600),
             "inactivity_autostop_minutes": (float, 0, 1440),
             "target_grace_seconds": (int, 1, 60),
             "strava_expires_at": (int, 0, 4_102_444_800),
@@ -209,8 +199,6 @@ class ConfigManager:
             if not minimum <= float(value) <= maximum:
                 raise ConfigError(f"{key} must be between {minimum:g} and {maximum:g}")
             validated[key] = kind(value)
-        if validated.get("data_points") not in ("instant", "averaged"):
-            raise ConfigError("data_points must be 'instant' or 'averaged'")
         if validated["pace_distance"] not in (200, 500, 1000):
             raise ConfigError("pace_distance must be 200, 500, or 1000")
         if str(validated.get("appearance_mode", "")).lower() not in (

@@ -93,10 +93,11 @@ epoch time only for timestamps that must be persisted or exchanged.
 - Keep capture, persistence, finalization, presentation, and external upload as
   distinct stages.
 - One business rule should have one implementation. FIT, summary, chart legend,
-  live preview, and completion card must not independently redefine the same
-  aggregate.
-- Treat samples as represented intervals where `sample_duration` exists, not as
-  timeless points.
+  and completion card must not independently redefine a finalized aggregate.
+  Live dashboard cards are presentation values and must consistently accumulate
+  the same averaged fields they display.
+- Treat every canonical sample as
+  `[session_elapsed - sample_duration, session_elapsed]`, not as a timeless point.
 - Make active-time and distance ownership explicit at pause and planned-step
   boundaries.
 - Do not infer activity from heart rate.

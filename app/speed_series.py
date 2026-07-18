@@ -1,16 +1,17 @@
-"""Distance-derived workout speed shared by summary, FIT and the live UI.
+"""Recorded workout speed shared by summary, FIT and the live UI.
 
-Canonical record speed is simply active distance attributed to a represented
-sample window divided by that window's active duration. Chart smoothing remains
-presentation-only; it does not rewrite FIT measurements or define maxima.
+Instantaneous ergometer speed is the canonical speed channel. Chart smoothing
+remains presentation-only; it does not rewrite FIT measurements or statistics.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from math import isfinite
 
 from .active_distance import ActiveDistanceAccumulator
 from .finalized_workout import FinalizedWorkout
+from .table import Table
 
 # Centered moving-average width used only for chart presentation.
 SPEED_SMOOTHING_WINDOW = 5
@@ -59,33 +60,20 @@ def smooth(
     return out
 
 
-def distance_derived_speed_mps(
-    finalized: FinalizedWorkout,
+def recorded_speed_mps(
+    table: Table, finalized: FinalizedWorkout
 ) -> dict[int, float | None]:
-    """Canonical per-record speed in m/s, keyed by active record index."""
+    """Return valid instantaneous speed for every active record index."""
+    values = table.get_column("speed_instant")
     result: dict[int, float | None] = {}
     for index in finalized.moving_indices:
-        distance_m = finalized.record_distance_m.get(index)
-        duration_s = finalized.record_duration_s.get(index, 0.0)
-        result[index] = (
-            max(distance_m, 0.0) / duration_s
-            if distance_m is not None and duration_s > 0
-            else None
-        )
+        try:
+            speed = float(values[index])
+        except (IndexError, TypeError, ValueError):
+            result[index] = None
+            continue
+        result[index] = speed if 0 <= speed <= 65.535 else None
     return result
-
-
-def peak_speed_mps(
-    speed_by_index: dict[int, float | None],
-    indices: Sequence[int],
-) -> float | None:
-    """Largest raw canonical record speed over ``indices``."""
-    present = [
-        speed_by_index[i]
-        for i in indices
-        if speed_by_index.get(i) is not None
-    ]
-    return max(present) if present else None  # type: ignore[type-var]
 
 
 class LiveSpeedTracker:
@@ -93,6 +81,8 @@ class LiveSpeedTracker:
 
     def __init__(self) -> None:
         self._distance = ActiveDistanceAccumulator()
+        self._speed_weighted_sum = 0.0
+        self._speed_weight_s = 0.0
         self.max_speed_mps: float | None = None
 
     @property
@@ -105,9 +95,9 @@ class LiveSpeedTracker:
 
     @property
     def avg_speed_mps(self) -> float | None:
-        """Active distance / active time -- the finalized average definition."""
-        if self.active_time_s > 0:
-            return self.active_distance_m / self.active_time_s
+        """Device-time-weighted instantaneous speed over active intervals."""
+        if self._speed_weight_s > 0:
+            return self._speed_weighted_sum / self._speed_weight_s
         return None
 
     def update(
@@ -119,14 +109,27 @@ class LiveSpeedTracker:
         reported_speed_mps: object = None,
     ) -> None:
         """Fold one live sample into active distance, time, average and maximum."""
-        update = self._distance.update(
+        self._distance.update(
             distance_m=distance_m,
             duration_s=duration_s,
             active=active,
-            reported_speed_mps=reported_speed_mps,
         )
-        speed_mps = update.speed_mps if update is not None else None
-        if speed_mps is not None and (
+        try:
+            active_now = float(active) > 0
+            duration = float(duration_s)
+            speed_mps = float(reported_speed_mps)
+        except (TypeError, ValueError):
+            return
+        if (
+            not active_now
+            or not isfinite(duration)
+            or duration <= 0
+            or not 0 <= speed_mps <= 65.535
+        ):
+            return
+        self._speed_weighted_sum += speed_mps * duration
+        self._speed_weight_s += duration
+        if (
             self.max_speed_mps is None or speed_mps > self.max_speed_mps
         ):
             self.max_speed_mps = speed_mps

@@ -50,16 +50,17 @@ def _build_workout():
     moving(8)
 
     columns = [
-        "timestamp", "heart_rate", "cadence", "distance", "speed", "pull_force",
-        "active", "sample_duration",
+        "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
+        "speed_instant", "pull_force", "active", "sample_duration",
     ]
     rows = [
         {
-            "timestamp": ts[i],
+            "timestamp": base + (i + 2) * 1000,
+            "session_elapsed": i + 2,
             "heart_rate": 120,
             "cadence": 80,
             "distance": dist[i],
-            "speed": speed[i],
+            "speed_instant": speed[i],
             "pull_force": 200,
             "active": 1 if speed[i] > 0 else 0,
             # The first sensor record represents two seconds, matching the
@@ -81,10 +82,7 @@ class RecordingBuilder:
 
 def _make_exporter():
     exporter = FitExporter.__new__(FitExporter)
-    exporter.config = {
-        "autopause_stationary_threshold_records": 5,
-        "autopause_gap_seconds": 5,
-    }
+    exporter.config = {}
 
     class _DummyLogger:
         def info(self, msg=""):
@@ -184,7 +182,7 @@ def test_records_are_sensor_samples_plus_gps_start_anchors() -> None:
     messages, segments = _emit_stream()
     records = [m for m in messages if type(m).__name__ == "RecordMessage"]
     record_count = len(records)
-    sensor_count = sum(seg["end_idx"] - seg["start_idx"] + 1 for seg in segments)
+    sensor_count = sum(len(seg["record_indices"]) for seg in segments)
     expected = sensor_count + len(segments)
     assert record_count == expected, f"{record_count} records, expected {expected}"
     # Three moving blocks of eight plus one compatibility anchor per block.
@@ -223,18 +221,23 @@ def test_inactive_tail_excluded_even_with_stale_speed() -> None:
     d = 0.0
     for i in range(10):  # moving: distance advances
         d += 3.0
-        rows.append({"timestamp": base + i * 1000, "distance": d, "speed": 3.0,
+        rows.append({"timestamp": base + (i + 1) * 1000,
+                     "session_elapsed": i + 1, "distance": d, "speed_instant": 3.0,
                      "active": 1, "sample_duration": 1})
     for i in range(10, 13):  # frozen distance, speed still non-zero, sub-threshold
-        rows.append({"timestamp": base + i * 1000, "distance": d, "speed": 1.2,
+        rows.append({"timestamp": base + (i + 1) * 1000,
+                     "session_elapsed": i + 1, "distance": d, "speed_instant": 1.2,
                      "active": 0, "sample_duration": 1})
-    df = Table(["timestamp", "distance", "speed", "active", "sample_duration"], rows)
+    df = Table(
+        ["timestamp", "session_elapsed", "distance", "speed_instant", "active", "sample_duration"],
+        rows,
+    )
 
     exporter = _make_exporter()
     builder = RecordingBuilder()
     segments = exporter._add_records(builder=builder, workout_df=df)
 
-    last_moving_ts = base + 9 * 1000
+    last_moving_ts = base + 10 * 1000
     assert segments[-1]["end_time_ms"] == last_moving_ts, segments[-1]
     record_ts = [
         m.timestamp for m in builder.messages if type(m).__name__ == "RecordMessage"

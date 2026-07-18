@@ -1,6 +1,6 @@
 # Roadmap and audit findings
 
-## Current execution status — 2026-07-15
+## Current execution status — 2026-07-18
 
 The strict first-version critical phase is implemented on the feature branch:
 
@@ -11,8 +11,8 @@ The strict first-version critical phase is implemented on the feature branch:
 - power calibration is explicit rather than process-global;
 - the generalized BLE heart-rate implementation no longer uses Garmin-specific
   module or class names;
-- release-audit fixes now enforce FIT duration units and the required Activity
-  message, conserve the terminal planned-step tail, reject unsupported resume
+- release-audit fixes enforce FIT duration units and the required Activity
+  message, conserve the terminal planned-step tail, preserve recorded resume
   distance jumps, and delete read-only recordings correctly on Windows;
 - CI and release builds use locked installs, timeouts, least privilege,
   pre-build validation, and bounded artifact retention.
@@ -44,21 +44,35 @@ Critical phases 1–3 started on `feature/fit-summary-source-of-truth` on
 | 3 | Active distance and authoritative chart/live metric policy | Completed | Full suite, Ruff and strict mypy pass |
 | 4 | FIT conformance and terminal/Windows release hardening | Completed | 156 tests, Ruff and strict mypy pass |
 | 5 | FIT/summary metric coherence and peak-speed invariants | Completed | 181 tests, historical FIT audit, Ruff and strict mypy pass |
+| 6 | Device-elapsed timeline and recorded-point reproducibility | Completed | 195 runnable tests, supplied-workout decoded FIT parity, compile and whitespace checks |
+| 7 | Canonical capture timeline and removal of unreleased compatibility paths | Completed | Canonical reset/gap tests, supplied-workout parity, 203 runnable tests |
 
 Implementation log:
 
-- 2026-07-18 — Superseded the instantaneous peak-speed policy: every reported
-  speed (chart line, averages, peaks, FIT records, live preview) now derives
-  from the distance channel via `app.speed_series` (D017). The live dashboard
-  preview gained `LiveSpeedTracker` so mid-workout avg/max track the finalized
-  summary/FIT numbers instead of the raw sensor channel.
+- 2026-07-18 — Replaced finalization-time reconstruction with capture-time
+  `session_elapsed__s` and `sample_duration__s`. Counter stalls/resets now
+  rebase once against monotonic receipt time, uncovered intervals explicitly
+  break active runs, planned sidecars use only canonical elapsed bounds, and
+  unused autopause compatibility settings and epoch step fields were deleted.
+
+- 2026-07-18 — Initially made device `elapsed_time__s` the record/session clock,
+  made every exact activity run a free lap, persisted elapsed planned-step
+  bounds, and removed threshold/gap overrides. Summary, FIT, and graph speed
+  share time-weighted active `speed_instant` values while raw odometer
+  deltas independently own distance. The supplied workout decodes to 62 s
+  elapsed, 39 s active, 117 m, three matching laps, and 10.22 km/h maximum.
+
+- 2026-07-18 — A temporary distance-derived speed policy was superseded after
+  the supplied recording proved its odometer distance/active-time ratios exceed
+  its recorded maximum. Finalized processing follows the reproducible
+  instantaneous-speed policy in D017.
 
 - 2026-07-17 — Phase 5 briefly made instantaneous speed authoritative for FIT
-  records and peaks before the 2026-07-18 distance-derived speed policy
-  superseded it. The lasting work from this phase bounded every average by its
-  maximum, rolled lap peaks into the session, shared one finalized metric result
-  between FIT and summary, retained rows with malformed unused CSV fields, and
-  conserved displayed split totals.
+  records and peaks. A temporary distance-derived policy followed, then the
+  recorded-point audit restored instantaneous speed for chart/FIT averages and
+  peaks. The lasting work shared one finalized metric result between FIT and
+  summary, retained rows with malformed unused CSV fields, and conserved
+  displayed split totals.
 
 - 2026-07-13 — Started critical phases from the roadmap; baseline branch was
   clean at `cbc50a7`.
@@ -88,7 +102,8 @@ Implementation log:
   the required FIT Activity summary, made a plan's terminal step own the full
   captured activity tail, capped resume jumps without valid speed, and made
   discard retry read-only files on Windows. Validation passed with 156 tests,
-  Ruff, strict mypy, lock consistency, and diff checks.
+  Ruff, strict mypy, lock consistency, and diff checks. The 2026-07-18
+  recorded-point contract later removed that resume cap.
 
 ## Critical fixes
 
@@ -175,11 +190,12 @@ transition crossed by a sample and the session persists each boundary.
 
 ### P1 — Define active distance consistently
 
-**Status: Completed 2026-07-13.** Active deltas now drive FIT records, session
-and lap totals, average speed, and the chart distance axis.
+**Status: Completed 2026-07-18.** Active deltas drive FIT records, session/lap
+distance totals, and the chart distance axis. Speed stays an independent
+recorded channel as specified by D017.
 
-- **Location:** `app/stats.py::cumulative_segment_distance`,
-  `app/finalized_workout.py::finalize_workout`
+- **Location:** `app.active_distance.ActiveDistanceAccumulator`,
+  `app.finalized_workout.py::finalize_workout`
 - **Root cause:** The distance numerator can include cumulative advances between
   active records while the denominator contains only active sample time.
 - **Impact:** Coasting or firmware behavior during inactive packets can inflate
@@ -295,19 +311,21 @@ and packet-processing times; epoch time is used only for recorded timestamps.
   duration kinds and non-integral repeats, and identify programs by file ID while
   treating names as labels.
 
-### P1 — Unify live and final metric policies
+### P1 — Make live and final metric policies explicit
 
-**Status: Completed 2026-07-13.** Live tiles, previews, pace, and planned target
-feedback select the same instant/averaged protocol fields as final processing.
+**Status: Completed 2026-07-18.** Main-window cards and planned targets use
+averaged device fields consistently. Summary, graph, and FIT processing share
+the finalized instantaneous-speed policy (D018).
 
 - **Location:** `gui/metrics_format.py::compute_power`,
   `gui/recording_lifecycle.py::_raw_metric`
-- **Root cause:** Main power prefers averaged packet fields regardless of the
-  selected data mode, while live preview statistics and final processing use a
-  different selection policy.
-- **Impact:** The live tile, its average preview, and final FIT can disagree.
-- **Recommendation:** Create one explicit metric-field policy and use it for
-  live formatting, streaming aggregates, CSV reading, summary, and FIT.
+- **Root cause:** A global source mode could not represent the different source
+  requirements of peak-preserving speed and calibrated power.
+- **Impact:** A card could display one channel while its secondary statistics
+  accumulated another.
+- **Resolution:** Each live card and target uses averaged fields; each card's
+  secondary statistics use its displayed field. Finalized consumers use their
+  separate shared policy.
 
 ### P1 — Reserve unique recording filenames atomically
 

@@ -18,7 +18,6 @@ import traceback
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
@@ -38,10 +37,9 @@ from .kayakfirst_ergometer_bluetooth import (
 from .logger import Logger
 from .program import Program
 from .program_runner import ProgramRunner
+from .recording_timeline import RecordingTimeline
 from .read_csv import CsvReader
 from .segmentation import (
-    DEFAULT_MAX_GAP_SECONDS,
-    DEFAULT_STATIONARY_THRESHOLD_RECORDS,
     LiveSegmenter,
     load_program_steps,
 )
@@ -62,48 +60,6 @@ class WorkoutAbortedError(Exception):
     For example, the user declined to continue after a heart-rate monitor
     could not be reached.
     """
-
-
-def _packet_timestamp_ms(
-    data: dict[str, Any],
-    *,
-    epoch_anchor_ms: int | None,
-    monotonic_anchor: float | None,
-    now_monotonic: float,
-    last_timestamp_ms: int | None,
-) -> int:
-    """Timestamp a packet on the ergometer timeline without overlapping windows."""
-    receipt_timestamp_ms = (
-        epoch_anchor_ms + round((now_monotonic - monotonic_anchor) * 1000)
-        if epoch_anchor_ms is not None and monotonic_anchor is not None
-        else round(datetime.now().timestamp() * 1000)
-    )
-    elapsed_s = to_float(data.get("elapsed_time__s"))
-    timestamp_ms = (
-        epoch_anchor_ms + round(elapsed_s * 1000)
-        if (
-            epoch_anchor_ms is not None
-            and elapsed_s is not None
-            and isfinite(elapsed_s)
-            and elapsed_s >= 0
-        )
-        else receipt_timestamp_ms
-    )
-    if last_timestamp_ms is not None:
-        represented_s = to_float(data.get("window_size__s"))
-        represented_ms = round(represented_s * 1000) if represented_s is not None else 0
-        earliest_non_overlapping_ms = last_timestamp_ms + max(represented_ms, 1)
-        # Multiple source packets can be delivered by one BLE notification.
-        # Keep their represented windows consecutive even when receipt times
-        # are identical or the device elapsed counter briefly stalls. If the
-        # counter moves backwards after a reconnect, re-anchor to receipt time
-        # so the real transport gap is not compressed to one sample window.
-        timestamp_ms = (
-            max(receipt_timestamp_ms, earliest_non_overlapping_ms)
-            if timestamp_ms < last_timestamp_ms
-            else max(timestamp_ms, earliest_non_overlapping_ms)
-        )
-    return timestamp_ms
 
 
 class WorkoutSession:
@@ -146,19 +102,9 @@ class WorkoutSession:
         self.prompt_callback = prompt_callback
         self._streaming_announced = False
 
-        # Live autopause / lap detector. Shares its rules with the FIT exporter
-        # so the dashboard's pause state and lap count match the exported laps.
-        self.segmenter = LiveSegmenter(
-            stationary_threshold=int(
-                self.config.get(
-                    "autopause_stationary_threshold_records",
-                    DEFAULT_STATIONARY_THRESHOLD_RECORDS,
-                )
-            ),
-            max_gap_seconds=float(
-                self.config.get("autopause_gap_seconds", DEFAULT_MAX_GAP_SECONDS)
-            ),
-        )
+        # Every activity-flag transition is reflected immediately so the live
+        # pause state and free-lap count match finalization.
+        self.segmenter = LiveSegmenter()
 
         # Optional structured training program driven off elapsed time / distance.
         self.program_runner: ProgramRunner | None = (
@@ -172,7 +118,7 @@ class WorkoutSession:
         # so the FIT exporter can build one lap per step.
         self._program_step_log: list[dict[str, Any]] = []
         self._current_step_entry: dict[str, Any] | None = None
-        self._last_data_ts_ms: int | None = None
+        self._last_session_elapsed_s: float | None = None
         self._last_program_checkpoint_monotonic = 0.0
         self._program_checkpoint_interval_s = max(
             float(self.config.get("program_checkpoint_interval_s", 15.0)), 1.0
@@ -187,8 +133,7 @@ class WorkoutSession:
         self.hrm: HeartRateMonitor | None = None
 
         self.session_start: datetime | None = None
-        self._epoch_anchor_ms: int | None = None
-        self._monotonic_anchor: float | None = None
+        self._recording_timeline: RecordingTimeline | None = None
         self.stop_event = asyncio.Event()
         self.csv_writer: CsvWriter | None = None
         self.csv_path: str | None = None
@@ -258,12 +203,15 @@ class WorkoutSession:
             done=bool(state.get("done")),
         )
 
-    def _record_step_boundary(self, state: dict[str, Any], ts_ms: int) -> None:
-        """Record program step start/end times for the FIT lap timeline."""
+    def _record_step_boundary(self, state: dict[str, Any]) -> None:
+        """Record canonical program step bounds for the FIT lap timeline."""
         if state.get("transition") not in ("step_start", "program_complete"):
             return
+        boundary_elapsed = to_float(state.get("boundary_elapsed"))
+        if boundary_elapsed is None:
+            raise ValueError("Program transition is missing canonical elapsed time")
         if self._current_step_entry is not None:
-            self._current_step_entry["end_ms"] = int(ts_ms)
+            self._current_step_entry["end_elapsed_s"] = boundary_elapsed
             self._program_step_log.append(self._current_step_entry)
             self._current_step_entry = None
         step = state.get("step")
@@ -272,9 +220,8 @@ class WorkoutSession:
                 "index": int(state.get("step_index", 0)),
                 "type": getattr(step, "kind", ""),
                 "label": getattr(step, "label", ""),
-                "start_ms": int(ts_ms),
+                "start_elapsed_s": boundary_elapsed,
             }
-        self._persist_program_steps(close_open=False)
 
     @staticmethod
     def _program_transition_events(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -284,28 +231,6 @@ class WorkoutSession:
             return [item for item in transitions if isinstance(item, dict)]
         return [state] if state.get("transition") is not None else []
 
-    @staticmethod
-    def _program_boundary_timestamp(
-        state: dict[str, Any], data: dict[str, Any], timestamp_ms: int
-    ) -> int:
-        """Map an interpolated runner boundary onto the recorded epoch timeline."""
-        if state.get("initial"):
-            try:
-                represented_ms = round(float(data.get("window_size__s", 0)) * 1000)
-            except (TypeError, ValueError):
-                represented_ms = 0
-            return timestamp_ms - max(represented_ms, 0)
-        try:
-            current_raw = data.get("elapsed_time__s")
-            boundary_raw = state.get("boundary_elapsed")
-            if current_raw is None or boundary_raw is None:
-                return timestamp_ms
-            current_elapsed = float(current_raw)
-            boundary_elapsed = float(boundary_raw)
-        except (TypeError, ValueError):
-            return timestamp_ms
-        return timestamp_ms - round(max(current_elapsed - boundary_elapsed, 0.0) * 1000)
-
     def _write_program_steps(self, close_open: bool = True) -> None:
         """Durably write the performed program timeline next to the CSV."""
         if self.program_runner is None or not self.csv_path:
@@ -314,18 +239,26 @@ class WorkoutSession:
         if (
             close_open
             and self._current_step_entry is not None
-            and self._last_data_ts_ms is not None
+            and self._last_session_elapsed_s is not None
         ):
-            self._current_step_entry["end_ms"] = int(self._last_data_ts_ms)
+            self._current_step_entry["end_elapsed_s"] = self._last_session_elapsed_s
             self._program_step_log.append(self._current_step_entry)
             self._current_step_entry = None
         steps = list(self._program_step_log)
-        if self._current_step_entry is not None and self._last_data_ts_ms is not None:
+        if (
+            self._current_step_entry is not None
+            and self._last_session_elapsed_s is not None
+        ):
             current = dict(self._current_step_entry)
-            current["end_ms"] = int(self._last_data_ts_ms)
+            current["end_elapsed_s"] = self._last_session_elapsed_s
             steps.append(current)
         if not steps:
             return
+        if self.program_runner.done and self._last_session_elapsed_s is not None:
+            steps[-1] = {
+                **steps[-1],
+                "end_elapsed_s": self._last_session_elapsed_s,
+            }
         sidecar = WorkoutPaths.from_csv(self.csv_path).steps
         write_atomic_json(
             sidecar,
@@ -410,8 +343,11 @@ class WorkoutSession:
             )
 
             self.session_start = datetime.now()
-            self._epoch_anchor_ms = round(self.session_start.timestamp() * 1000)
-            self._monotonic_anchor = time.monotonic()
+            monotonic_start = time.monotonic()
+            self._recording_timeline = RecordingTimeline(
+                epoch_start_ms=round(self.session_start.timestamp() * 1000),
+                monotonic_start_s=monotonic_start,
+            )
 
             self._setup_csv_writer()
 
@@ -502,9 +438,7 @@ class WorkoutSession:
             if self.csv_path and self.data_point_count > 0:
                 try:
                     reader = CsvReader(file_path=self.csv_path, config=self.config)
-                    workout_df = reader.read_all(
-                        data_points=self.config.get("data_points", "instant")
-                    )
+                    workout_df = reader.read_all()
                     self._print_workout_summary(workout_df=workout_df)
                     if self._summary_error is not None:
                         failure_stage = "finalization"
@@ -805,15 +739,16 @@ class WorkoutSession:
             data: Dictionary of ergometer values.
         """
         now_monotonic = time.monotonic()
-        timestamp_ms = _packet_timestamp_ms(
-            data,
-            epoch_anchor_ms=self._epoch_anchor_ms,
-            monotonic_anchor=self._monotonic_anchor,
-            now_monotonic=now_monotonic,
-            last_timestamp_ms=self._last_data_ts_ms,
+        if self._recording_timeline is None:
+            raise RuntimeError("Recording timeline is not initialized")
+        timing = self._recording_timeline.advance(
+            device_elapsed_s=data.get("elapsed_time__s"),
+            device_window_s=data.get("window_size__s"),
+            receipt_monotonic_s=now_monotonic,
         )
-        data["timestamp"] = timestamp_ms
-        self._last_data_ts_ms = timestamp_ms
+        data["timestamp"] = timing.timestamp_ms
+        data["session_elapsed__s"] = timing.session_elapsed_s
+        data["sample_duration__s"] = timing.sample_duration_s
 
         # Feed the stall watchdog; announce recovery if data had stopped.
         self._last_data_monotonic = time.monotonic()
@@ -850,6 +785,9 @@ class WorkoutSession:
                 self.stop_event.set()
                 return
 
+        # Sidecars may only advance through the last durable CSV row. If the
+        # write above fails, teardown keeps the preceding performed endpoint.
+        self._last_session_elapsed_s = timing.session_elapsed_s
         self.data_point_count += 1
 
         if not self._streaming_announced:
@@ -858,10 +796,8 @@ class WorkoutSession:
 
         # Live autopause / lap detection, mirroring the FIT exporter's rules.
         seg = self.segmenter.update(
-            distance=data.get("distance__m"),
-            speed=data.get("speed_instant__mps"),
-            timestamp_ms=data.get("timestamp"),
             active=data.get("active_paddling"),
+            gap_before_s=timing.gap_before_s,
         )
         if seg["transition"] is not None:
             if seg["transition"] == "pause":
@@ -879,18 +815,16 @@ class WorkoutSession:
         # Structured program progression (if a program is running).
         if self.program_runner is not None:
             prog = self.program_runner.update(
-                elapsed_s=data.get("elapsed_time__s"),
+                elapsed_s=data.get("session_elapsed__s"),
                 distance_m=data.get("distance__m"),
-                sample_duration_s=data.get("window_size__s"),
+                sample_duration_s=data.get("sample_duration__s"),
             )
             transitions = self._program_transition_events(prog)
             if transitions:
                 for transition_state in transitions:
                     self._emit_program_status(transition_state)
-                    boundary_ts = self._program_boundary_timestamp(
-                        transition_state, data, timestamp_ms
-                    )
-                    self._record_step_boundary(transition_state, boundary_ts)
+                    self._record_step_boundary(transition_state)
+                self._persist_program_steps(close_open=False)
             else:
                 self._emit_program_status(prog)
             program_done = any(
@@ -908,7 +842,9 @@ class WorkoutSession:
                 stepped_events = self._program_transition_events(stepped)
                 for transition_state in stepped_events:
                     self._emit_program_status(transition_state)
-                    self._record_step_boundary(transition_state, timestamp_ms)
+                    self._record_step_boundary(transition_state)
+                if stepped_events:
+                    self._persist_program_steps(close_open=False)
                 program_done = any(
                     item.get("transition") == "program_complete"
                     for item in stepped_events
@@ -939,10 +875,10 @@ class WorkoutSession:
         """
         metrics = []
 
-        if data.get("elapsed_time__s"):
+        if data.get("session_elapsed__s") is not None:
             # int() guard: the field arrives as Decimal when the firmware sends
             # it with a fraction, and Decimal rejects the "d" format code.
-            elapsed = int(data["elapsed_time__s"])
+            elapsed = int(data["session_elapsed__s"])
             mins = elapsed // 60
             secs = elapsed % 60
             metrics.append(f"Time: {mins:02d}:{secs:02d}")
@@ -1013,7 +949,7 @@ class WorkoutSession:
                 active_time_s=active_time,
                 elapsed_time_s=elapsed_time,
                 pause_time_s=summary.pause_time_s,
-                data_points=int(workout_df.height),
+                record_count=int(workout_df.height),
                 csv_path=self.csv_path,
                 incomplete=self._persistence_error is not None,
                 persistence_error=self._persistence_error,

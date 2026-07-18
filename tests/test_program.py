@@ -76,13 +76,13 @@ def test_time_and_distance_progression() -> None:
     r = ProgramRunner(program.load_program(spec), on_event=lambda e: events.append(e["transition"]))
     # t=0..4s, distance flat -> still on step 1
     for t in range(0, 5):
-        r.update(elapsed_s=t, distance_m=0)
+        r.update(elapsed_s=t, distance_m=0, sample_duration_s=0 if t == 0 else 1)
     assert r.index == 0 and not r.done
     # t=5s -> step 1 (time) completes, step 2 (distance) starts
-    r.update(elapsed_s=5, distance_m=0)
+    r.update(elapsed_s=5, distance_m=0, sample_duration_s=1)
     assert r.index == 1, f"expected step 2 active, got index {r.index}"
     # advance distance to 20 -> program completes
-    r.update(elapsed_s=6, distance_m=20)
+    r.update(elapsed_s=6, distance_m=20, sample_duration_s=1)
     assert r.done, "program should be complete after distance step"
     assert events[-1] == "program_complete"
     assert events.count("step_start") == 2
@@ -96,7 +96,7 @@ def test_open_step_needs_advance() -> None:
     ]}
     r = ProgramRunner(program.load_program(spec))
     for t in range(0, 100):  # lots of time passes; open step never auto-completes
-        r.update(elapsed_s=t, distance_m=t)
+        r.update(elapsed_s=t, distance_m=t, sample_duration_s=0 if t == 0 else 1)
     assert r.index == 0 and not r.done, "open step must not auto-complete"
     r.advance()  # manual lap/skip
     assert r.index == 1, "advance should move to next step"
@@ -113,8 +113,8 @@ def test_large_sample_jump_preserves_all_exact_step_boundaries() -> None:
         ],
     }
     runner = ProgramRunner(program.load_program(spec))
-    runner.update(elapsed_s=0, distance_m=0)
-    state = runner.update(elapsed_s=20, distance_m=0)
+    runner.update(elapsed_s=0, distance_m=0, sample_duration_s=0)
+    state = runner.update(elapsed_s=20, distance_m=0, sample_duration_s=0)
     assert runner.done
     assert state["transition"] == "program_complete"
     transitions = state["transitions"]
@@ -158,8 +158,8 @@ def test_mixed_step_overshoot_interpolates_time_and_distance() -> None:
         ],
     }
     runner = ProgramRunner(program.load_program(spec))
-    runner.update(elapsed_s=0, distance_m=0)
-    state = runner.update(elapsed_s=10, distance_m=30)
+    runner.update(elapsed_s=0, distance_m=0, sample_duration_s=0)
+    state = runner.update(elapsed_s=10, distance_m=30, sample_duration_s=10)
     transitions = state["transitions"]
     assert len(transitions) == 2
     assert transitions[0]["boundary_elapsed"] == 5.0
@@ -175,8 +175,8 @@ def test_remaining_reported() -> None:
         {"type": "work", "duration": {"kind": "time", "seconds": 60}},
     ]}
     r = ProgramRunner(program.load_program(spec))
-    r.update(elapsed_s=0, distance_m=0)
-    st = r.update(elapsed_s=20, distance_m=0)
+    r.update(elapsed_s=0, distance_m=0, sample_duration_s=0)
+    st = r.update(elapsed_s=20, distance_m=0, sample_duration_s=0)
     assert st["remaining_kind"] == "time"
     assert abs(st["remaining"] - 40) < 0.01, st["remaining"]
     print(f"  ok: remaining time reported ({st['remaining']:.0f}s left)")

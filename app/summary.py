@@ -22,7 +22,7 @@ from .coerce import to_float
 from .finalized_workout import finalize_workout
 from .logger import Logger
 from .power import DEFAULT_PULL_LENGTH_M, estimate_power, normalize_pull_length
-from .speed_series import distance_derived_speed_mps
+from .speed_series import recorded_speed_mps
 from .stats import (
     time_in_hr_zones,
     zone_lower_bounds,
@@ -93,7 +93,7 @@ class WorkoutSummary:
     laps: list[LapSummary] = field(default_factory=list)
     # Chart series, one entry per active sensor record emitted to FIT. Synthetic
     # GPS start anchors are export-only compatibility records and do not appear.
-    # ``series_t`` is seconds since the first record (wall clock); the value
+    # ``series_t`` is seconds since recording elapsed zero; the value
     # series contain None for gaps so a chart can break the line instead of
     # interpolating across pauses. ``series_distance`` is the cumulative
     # distance (metres) at each record, an alternative x-axis for the same
@@ -110,11 +110,12 @@ class WorkoutSummary:
     # chart uses these boundaries to break lines and smoothing without
     # inventing non-FIT records solely as visual sentinels.
     series_breaks: list[bool] = field(default_factory=list)
-    # Planned step bands on the chart's time axis: start/end seconds relative
-    # to its first active record, label and step kind. Empty for free workouts.
+    # Planned step bands on the chart's canonical session-elapsed time axis.
+    # seconds, label and step kind. Empty for free workouts.
     series_steps: list[tuple[float, float, str, str | None]] = field(
         default_factory=list
     )
+    series_time_bounds: tuple[float, float] = (0.0, 0.0)
 
     @property
     def duration_s(self) -> float:
@@ -185,16 +186,16 @@ def compute_summary(
 
     Args:
         table: Output of ``CsvReader.read_all`` (columns: timestamp,
-            heart_rate, cadence, distance, speed, pull_force).
+            heart_rate, cadence, distance, speed_instant, pull_force).
         max_hr: Max heart rate used to derive zone bounds (when ``zones`` is None).
         zones: Optional five ascending manual zone lower bounds (bpm).
         program_steps: Optional recorded program step timeline (the
             ``steps.json`` timeline; see ``segmentation.load_program_steps``).
             When present, laps follow the program steps exactly as the FIT
             exporter's do; otherwise laps come from movement detection.
-        config: Optional app configuration mapping. Auto-pause tuning is
-            applied by the same finalization path used by the FIT exporter, so
-            on-screen splits and exported laps agree by construction.
+        config: Optional recorded processing configuration. Finalization is the
+            same path used by the FIT exporter, so on-screen splits and encoded
+            laps agree by construction.
 
     Raises:
         ValueError: If the table is empty.
@@ -202,9 +203,7 @@ def compute_summary(
     if table.is_empty():
         raise ValueError("Workout contains no records.")
 
-    finalized = finalize_workout(
-        table, program_steps=program_steps, config=config, logger=logger
-    )
+    finalized = finalize_workout(table, program_steps=program_steps, logger=logger)
     if not finalized.segments:
         raise ValueError("Workout contains no active ergometer samples.")
     pull_length_m = normalize_pull_length(
@@ -212,26 +211,15 @@ def compute_summary(
         if config is not None
         else DEFAULT_PULL_LENGTH_M
     )
-    timestamps = finalized.timestamps_ms
-    t0_ms = timestamps[0]
-
     hrs = [to_float(v) for v in table.get_column("heart_rate")]
     cadences = [to_float(v) for v in table.get_column("cadence")]
     forces = [to_float(v) for v in table.get_column("pull_force")]
 
     # ---- chart series ------------------------------------------------------
-    # The plotted speed comes from the same active-distance/time source as the
-    # lap and session averages and the reported peak (see app.speed_series),
-    # rather than the raw speed_instant sensor channel. Deriving one coherent
-    # speed story from the distance channel keeps the chart line, the average
-    # and the maximum consistent by construction -- the line can never sit
-    # above the stated max nor below the stated average, the discrepancy that
-    # produced the original report (workout_20260717_210142, laps 2-3, where
-    # the table read ~10.1 km/h while every plotted sensor point was below 10).
-    # The chart applies presentation-only smoothing on top of these canonical
-    # per-record values. Reported maximum speed remains the raw record peak, so
-    # smoothing cannot create a plotted value above it.
-    series_speed_by_index = distance_derived_speed_mps(finalized)
+    # The chart, lap/session aggregates and FIT records use the same recorded
+    # instantaneous-speed channel. Smoothing remains presentation-only and the
+    # raw maximum point is restored by the chart renderer.
+    series_speed_by_index = recorded_speed_mps(table, finalized)
     series_speed = [series_speed_by_index.get(i) for i in range(table.height)]
     series_hr = [h if h is not None and h > 0 else None for h in hrs]
     series_power = [
@@ -245,14 +233,13 @@ def compute_summary(
 
     # ---- laps (identical to the FIT export, by construction) ----------------
     # The single shared finalized model: program-step groups when a timeline
-    # exists, natural autopause groups otherwise, with exact active runs kept
-    # separately for FIT timer events and the chart record domain.
+    # exists, or one lap per exact activity run otherwise.
     segments = finalized.segments
     finalized_laps = finalized.laps
     finalized_metrics = compute_finalized_metrics(
         table, finalized, pull_length_m=pull_length_m
     )
-    summary_start_ms = segments[0]["start_time_ms"] if segments else t0_ms
+    summary_start_ms = finalized.timeline_start_time_ms
     laps = []
     for i, (lap, metrics) in enumerate(
         zip(finalized_laps, finalized_metrics.laps, strict=True)
@@ -260,7 +247,7 @@ def compute_summary(
         next_start_ms = (
             finalized_laps[i + 1].start_time_ms
             if i + 1 < len(finalized_laps)
-            else finalized.end_time_ms
+            else finalized.timeline_end_time_ms
         )
         laps.append(
             _lap_summary(
@@ -284,7 +271,7 @@ def compute_summary(
     distance_m = finalized.total_distance_m
     moving_indices = finalized.moving_indices
     chart_breaks = set(finalized.chart_break_indices)
-    chart_start_ms = timestamps[moving_indices[0]] if moving_indices else summary_start_ms
+    chart_start_ms = finalized.timeline_start_time_ms
     # Overall averages/peaks come from the finalized aggregate shared verbatim
     # with FIT session/lap messages.
     #
@@ -344,11 +331,12 @@ def compute_summary(
         ),
         zone_seconds=zone_seconds,
         laps=laps,
-        # These are the active sensor records emitted to FIT. The visualization's
-        # first record is time zero; FIT START and its GPS-only anchor may precede
-        # it by that record's sample window, but plotting the end timestamp at
-        # +1 s created a false empty tail. Later wall-clock gaps are retained.
-        series_t=[(timestamps[i] - chart_start_ms) / 1000.0 for i in moving_indices],
+        # Each value represents the interval beginning at this x coordinate.
+        # The explicit chart bounds retain the complete elapsed tail.
+        series_t=[
+            (finalized.record_windows_ms[i][0] - chart_start_ms) / 1000.0
+            for i in moving_indices
+        ],
         series_speed=[series_speed[i] for i in moving_indices],
         series_hr=[series_hr[i] for i in moving_indices],
         series_power=[series_power[i] for i in moving_indices],
@@ -368,4 +356,5 @@ def compute_summary(
             for lap in finalized_laps
             if lap.label or lap.kind
         ],
+        series_time_bounds=(0.0, elapsed_time_s),
     )

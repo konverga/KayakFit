@@ -2,17 +2,11 @@
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
-from itertools import pairwise
 from math import floor, isfinite
 from typing import Any
 
 from .active_distance import ActiveDistanceAccumulator
-from .segmentation import (
-    DEFAULT_MAX_GAP_SECONDS,
-    DEFAULT_STATIONARY_THRESHOLD_RECORDS,
-    program_step_bounds,
-    resolve_segments,
-)
+from .segmentation import program_step_bounds, resolve_segments
 from .table import Table
 
 
@@ -25,19 +19,24 @@ class ActivitySegment(Mapping[str, Any]):
     start_time_ms: int
     end_time_ms: int
     timer_time_ms: int
+    record_indices: tuple[int, ...]
 
     def __getitem__(self, key: str) -> Any:
         if key not in (
-            "start_idx", "end_idx", "start_time_ms", "end_time_ms", "timer_time_ms"
+            "start_idx", "end_idx", "start_time_ms", "end_time_ms",
+            "timer_time_ms", "record_indices",
         ):
             raise KeyError(key)
-        return int(getattr(self, key))
+        return getattr(self, key)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(("start_idx", "end_idx", "start_time_ms", "end_time_ms", "timer_time_ms"))
+        return iter((
+            "start_idx", "end_idx", "start_time_ms", "end_time_ms",
+            "timer_time_ms", "record_indices",
+        ))
 
     def __len__(self) -> int:
-        return 5
+        return 6
 
 
 @dataclass(frozen=True)
@@ -83,11 +82,14 @@ class FinalizedWorkout:
     """The authoritative record/segment domain of a processed workout."""
 
     timestamps_ms: list[int]
+    timeline_start_time_ms: int
+    timeline_end_time_ms: int
+    record_windows_ms: dict[int, tuple[int, int]]
     # Exact contiguous runs of active FIT records. These own timer events.
     segments: tuple[ActivitySegment, ...]
     # Presentation/FIT lap groups. A lap can contain multiple active runs.
     laps: tuple[FinalizedLap, ...]
-    # Row indices where chart lines/smoothing restart (lap or meaningful pause).
+    # Row indices where chart lines and smoothing restart (every active run).
     chart_break_indices: tuple[int, ...]
     moving_indices: tuple[int, ...]
     # Active-only cumulative distance written to each FIT record. Missing raw
@@ -118,82 +120,111 @@ class FinalizedWorkout:
 
 
 def _build_activity_domain(
-    table: Table,
-    timestamps: list[int],
+    record_windows_ms: dict[int, tuple[int, int]],
     resolved: list[dict[str, Any]],
 ) -> tuple[
     list[ActivitySegment],
     list[int],
     dict[int, int],
-    dict[int, tuple[int, int]],
 ]:
-    """Validate sample windows and materialize exact active record runs."""
-    sample_durations = table.get_column_or_none("sample_duration")
-    if sample_durations is None:
-        raise ValueError("Workout is not v1: sample_duration is required")
+    """Materialize exact active runs from canonical represented intervals."""
     segments: list[ActivitySegment] = []
     record_timer_ms: dict[int, int] = {}
-    record_windows_ms: dict[int, tuple[int, int]] = {}
     for raw_segment in resolved:
+        indices = tuple(int(index) for index in raw_segment["record_indices"])
         represented_windows_ms: list[int] = []
-        previous_window_end_ms: int | None = None
-        for index in range(raw_segment["start_idx"], raw_segment["end_idx"] + 1):
-            try:
-                represented_ms = round(float(sample_durations[index]) * 1000)
-            except (IndexError, TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Workout is not v1: invalid sample_duration at row {index}"
-                ) from exc
+        for index in indices:
+            window_start_ms, window_end_ms = record_windows_ms[index]
+            represented_ms = window_end_ms - window_start_ms
             if represented_ms <= 0:
                 raise ValueError(
-                    f"Workout is not v1: sample_duration must be positive at row {index}"
-                )
-            window_end_ms = timestamps[index]
-            window_start_ms = window_end_ms - represented_ms
-            if (
-                previous_window_end_ms is not None
-                and window_start_ms < previous_window_end_ms
-            ):
-                raise ValueError(
-                    "Workout is not v1: sample windows overlap at "
-                    f"row {index} ({window_start_ms} < {previous_window_end_ms})"
+                    f"Workout is not v1: elapsed interval must be positive at row {index}"
                 )
             represented_windows_ms.append(represented_ms)
             record_timer_ms[index] = represented_ms
-            record_windows_ms[index] = (window_start_ms, window_end_ms)
-            previous_window_end_ms = window_end_ms
-        first_index = int(raw_segment["start_idx"])
-        last_index = int(raw_segment["end_idx"])
+        first_index = indices[0]
+        last_index = indices[-1]
         adjusted = ActivitySegment(
             start_idx=first_index,
             end_idx=last_index,
             start_time_ms=record_windows_ms[first_index][0],
             end_time_ms=record_windows_ms[last_index][1],
             timer_time_ms=sum(represented_windows_ms),
+            record_indices=indices,
         )
         if adjusted.timer_time_ms > adjusted.end_time_ms - adjusted.start_time_ms:
             raise ValueError("Workout is not v1: active timer exceeds elapsed time")
         segments.append(adjusted)
     moving_indices = [
-        index
-        for segment in segments
-        for index in range(segment.start_idx, segment.end_idx + 1)
+        index for segment in segments for index in segment.record_indices
     ]
-    return segments, moving_indices, record_timer_ms, record_windows_ms
+    return segments, moving_indices, record_timer_ms
+
+
+def _build_record_timeline(
+    table: Table, raw_timestamps_ms: list[int]
+) -> tuple[list[int], dict[int, tuple[int, int]], int, int]:
+    """Validate and materialize the canonical CSV timing fields."""
+    elapsed_values = table.get_column_or_none("session_elapsed")
+    sample_durations = table.get_column_or_none("sample_duration")
+    if elapsed_values is None or sample_durations is None:
+        raise ValueError(
+            "Workout is not v1: session_elapsed and sample_duration are required"
+        )
+    if len(elapsed_values) != len(raw_timestamps_ms):
+        raise ValueError("Workout is not v1: incomplete canonical timeline")
+
+    elapsed_ms: list[int] = []
+    windows: dict[int, tuple[int, int]] = {}
+    origin_ms: int | None = None
+    previous_endpoint_ms = 0
+    for index, (timestamp, elapsed_value, duration_value) in enumerate(
+        zip(raw_timestamps_ms, elapsed_values, sample_durations, strict=True)
+    ):
+        try:
+            endpoint_ms = round(float(elapsed_value) * 1000)
+            represented_ms = round(float(duration_value) * 1000)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Workout is not v1: invalid canonical timing at row {index}"
+            ) from exc
+        if endpoint_ms < 0 or represented_ms < 0 or represented_ms > endpoint_ms:
+            raise ValueError(
+                f"Workout is not v1: invalid canonical timing at row {index}"
+            )
+        if index and endpoint_ms < elapsed_ms[-1]:
+            raise ValueError(
+                f"Workout is not v1: session_elapsed must not decrease at row {index}"
+            )
+        if origin_ms is None:
+            origin_ms = timestamp - endpoint_ms
+        if timestamp != origin_ms + endpoint_ms:
+            raise ValueError(
+                f"Workout is not v1: timestamp disagrees with session_elapsed at row {index}"
+            )
+        start_ms = timestamp - represented_ms
+        previous_timestamp_ms = origin_ms + previous_endpoint_ms
+        if index and start_ms < previous_timestamp_ms:
+            raise ValueError(
+                f"Workout is not v1: sample windows overlap at row {index}"
+            )
+        windows[index] = (start_ms, timestamp)
+        elapsed_ms.append(endpoint_ms)
+        previous_endpoint_ms = endpoint_ms
+    assert origin_ms is not None
+    return raw_timestamps_ms, windows, origin_ms, origin_ms + elapsed_ms[-1]
 
 
 def _calculate_active_distance(
     distances: list[Any],
-    speeds: list[Any],
     moving_indices: list[int],
     record_timer_ms: dict[int, int],
 ) -> tuple[dict[int, float | None], dict[int, float | None], float]:
     """Attribute cumulative-distance deltas only to active record windows.
 
-    The ergometer can publish a coarse cumulative-distance jump on the first
-    packet after a pause. Only the distance represented by that resumed active
-    window belongs to the new segment; the remainder accumulated while the
-    activity flag was inactive must not create an impossible split speed.
+    Each active interval owns the raw odometer advance since the preceding
+    record. Inactive rows advance only the baseline. No speed-based cap rewrites
+    a recorded distance jump.
     """
     record_distance_m: dict[int, float | None] = {}
     cumulative: dict[int, float | None] = {}
@@ -208,7 +239,6 @@ def _calculate_active_distance(
             distance_m=value,
             duration_s=record_timer_ms.get(index, 0) / 1000.0,
             active=active,
-            reported_speed_mps=speeds[index] if index < len(speeds) else None,
         )
         if not active:
             for pending_index in pending_indices:
@@ -246,38 +276,28 @@ def _calculate_active_distance(
 
 
 def _build_planned_laps(
-    segments: list[ActivitySegment],
     program_steps: list[dict[str, Any]] | None,
     moving_indices: list[int],
     record_windows_ms: dict[int, tuple[int, int]],
     record_timer_ms: dict[int, int],
     record_distance_m: dict[int, float | None],
+    timeline_start_ms: int,
+    timeline_end_ms: int,
 ) -> list[FinalizedLap]:
     """Intersect active sample windows with the performed program timeline."""
-    if not segments or program_steps is None:
+    if program_steps is None:
         return []
-    activity_start_ms = segments[0].start_time_ms
-    activity_end_ms = segments[-1].end_time_ms
-    previous_step_end_ms = activity_start_ms
+    previous_step_end_ms = timeline_start_ms
     moving_cursor = 0
     laps: list[FinalizedLap] = []
     for ordinal, step in enumerate(program_steps):
         bounds = program_step_bounds(step)
         assert bounds is not None
-        start_value, end_value = bounds
-        step_start_ms = max(round(start_value), activity_start_ms, previous_step_end_ms)
-        # A naturally completed plan is only observed when its final sensor
-        # packet arrives. The terminal step therefore owns the complete captured
-        # activity tail, including the remainder of that sample window and any
-        # packet already buffered before polling stops. Interior boundaries stay
-        # exact, and conservation remains strict for every non-terminal gap.
-        step_end_ms = (
-            activity_end_ms
-            if ordinal == len(program_steps) - 1
-            else min(round(end_value), activity_end_ms)
-        )
-        if step_end_ms < step_start_ms:
-            continue
+        start_seconds, end_seconds = bounds
+        step_start_ms = timeline_start_ms + round(start_seconds * 1000)
+        step_end_ms = timeline_start_ms + round(end_seconds * 1000)
+        if step_start_ms != previous_step_end_ms or step_end_ms > timeline_end_ms:
+            raise ValueError("Planned v1 workout has a non-consecutive timeline")
         previous_step_end_ms = step_end_ms
         record_indices: list[int] = []
         record_weights_s: list[float] = []
@@ -323,41 +343,19 @@ def _build_planned_laps(
 
 def _build_free_laps(
     segments: list[ActivitySegment],
-    threshold: int,
-    max_gap_ms: float,
     record_timer_ms: dict[int, int],
     record_distance_m: dict[int, float | None],
 ) -> list[FinalizedLap]:
-    """Group exact activity runs into natural free-workout laps."""
-    groups: list[list[ActivitySegment]] = []
-    for segment in segments:
-        if not groups:
-            groups.append([segment])
-            continue
-        previous = groups[-1][-1]
-        inactive_records = segment.start_idx - previous.end_idx - 1
-        timestamp_gap = segment.start_time_ms - previous.end_time_ms
-        if inactive_records < threshold and (
-            max_gap_ms == 0 or timestamp_gap <= max_gap_ms
-        ):
-            groups[-1].append(segment)
-        else:
-            groups.append([segment])
-
+    """Create one free-workout lap for every exact active run."""
     laps: list[FinalizedLap] = []
-    for group in groups:
-        first, last = group[0], group[-1]
-        indices = tuple(
-            index
-            for segment in group
-            for index in range(segment.start_idx, segment.end_idx + 1)
-        )
+    for segment in segments:
+        indices = segment.record_indices
         laps.append(FinalizedLap(
-            start_idx=first.start_idx,
-            end_idx=last.end_idx,
-            start_time_ms=first.start_time_ms,
-            end_time_ms=last.end_time_ms,
-            timer_time_ms=sum(item.timer_time_ms for item in group),
+            start_idx=segment.start_idx,
+            end_idx=segment.end_idx,
+            start_time_ms=segment.start_time_ms,
+            end_time_ms=segment.end_time_ms,
+            timer_time_ms=segment.timer_time_ms,
             record_indices=indices,
             record_weights_s=tuple(
                 record_timer_ms.get(index, 0) / 1000.0 for index in indices
@@ -369,26 +367,9 @@ def _build_free_laps(
 
 def _chart_breaks(
     segments: list[ActivitySegment],
-    laps: list[FinalizedLap],
-    moving_indices: list[int],
-    planned: bool,
-    threshold: int,
-    max_gap_ms: float,
 ) -> set[int]:
-    """Find chart polyline breaks without changing the FIT timer domain."""
-    breaks = (
-        {moving_indices[0]}
-        if planned and moving_indices
-        else {lap.record_indices[0] for lap in laps if lap.record_indices}
-    )
-    for previous, segment in pairwise(segments):
-        inactive_records = segment.start_idx - previous.end_idx - 1
-        timestamp_gap = segment.start_time_ms - previous.end_time_ms
-        if inactive_records >= threshold or (
-            max_gap_ms > 0 and timestamp_gap > max_gap_ms
-        ):
-            breaks.add(segment.start_idx)
-    return breaks
+    """Break chart lines at every inactive interval or free-lap boundary."""
+    return {segment.start_idx for segment in segments}
 
 
 def _conserve_lap_totals(
@@ -425,80 +406,76 @@ def finalize_workout(
     table: Table,
     *,
     program_steps: list[dict[str, Any]] | None = None,
-    config: Mapping[str, Any] | None = None,
     logger: Any | None = None,
 ) -> FinalizedWorkout:
     """Resolve the exact records, segments, timing and distance written to FIT."""
     if program_steps is not None:
         if not program_steps:
             raise ValueError("Planned v1 workout requires a non-empty step timeline")
+        previous_end = 0.0
         for ordinal, step in enumerate(program_steps):
-            if not isinstance(step, dict) or program_step_bounds(step) is None:
+            bounds = program_step_bounds(step)
+            if (
+                bounds is None
+                or step.get("index") != ordinal
+                or bounds[0] != previous_end
+            ):
                 raise ValueError(
                     f"Planned v1 workout has an invalid step at index {ordinal}"
                 )
+            previous_end = bounds[1]
     try:
-        timestamps = [int(value) for value in table.get_column("timestamp")]
-    except (TypeError, ValueError) as exc:
+        raw_timestamps = []
+        for value in table.get_column("timestamp"):
+            timestamp = int(value)
+            if isinstance(value, bool) or float(value) != timestamp:
+                raise ValueError
+            raw_timestamps.append(timestamp)
+    except (OverflowError, TypeError, ValueError) as exc:
         raise ValueError("Workout is not v1: every timestamp must be an integer") from exc
-    if any(current <= previous for previous, current in pairwise(timestamps)):
-        raise ValueError("Workout is not v1: timestamps must be strictly increasing")
+    if not raw_timestamps:
+        raise ValueError("Workout contains no records")
+    timestamps, record_windows_ms, timeline_start_ms, timeline_end_ms = (
+        _build_record_timeline(table, raw_timestamps)
+    )
+    if program_steps is not None:
+        _, final_end_s = program_step_bounds(program_steps[-1]) or (0.0, -1.0)
+        timeline_elapsed_s = (timeline_end_ms - timeline_start_ms) / 1000.0
+        if round(final_end_s * 1000) != round(timeline_elapsed_s * 1000):
+            raise ValueError("Planned v1 workout must cover the complete session timeline")
     # The activity record/timer domain is independent of a workout plan. A
     # plan groups those records later; it must never add/remove sensor samples.
+    active_values = table.get_column_or_none("active")
+    if active_values is None:
+        raise ValueError("Workout is not v1: active_paddling is required for every row")
     resolved = resolve_segments(
-        timestamps_ms=timestamps,
-        height=table.height,
-        distance_col=table.get_column_or_none("distance"),
-        speed_col=table.get_column_or_none("speed"),
-        active_col=table.get_column_or_none("active"),
-        config=config,
+        record_windows_ms=record_windows_ms,
+        active_col=active_values,
         logger=logger,
     )
-    segments, moving_indices, record_timer_ms, record_windows_ms = (
-        _build_activity_domain(table, timestamps, resolved)
+    segments, moving_indices, record_timer_ms = _build_activity_domain(
+        record_windows_ms, resolved
     )
     distances = table.get_column("distance")
-    speed_column = "speed_instant" if "speed_instant" in table else "speed"
-    speeds = table.get_column(speed_column)
     record_distance_m, active_cumulative_distance_m, total_distance = (
         _calculate_active_distance(
             distances,
-            speeds,
             moving_indices,
             record_timer_ms,
         )
     )
-    cfg: Mapping[str, Any] = config if config is not None else {}
-    threshold = max(
-        int(
-            cfg.get(
-                "autopause_stationary_threshold_records",
-                DEFAULT_STATIONARY_THRESHOLD_RECORDS,
-            )
-        ),
-        1,
-    )
-    max_gap_ms = max(
-        float(cfg.get("autopause_gap_seconds", DEFAULT_MAX_GAP_SECONDS)), 0.0
-    ) * 1000.0
     laps = _build_planned_laps(
-        segments, program_steps, moving_indices, record_windows_ms,
-        record_timer_ms, record_distance_m,
+        program_steps, moving_indices, record_windows_ms,
+        record_timer_ms, record_distance_m, timeline_start_ms, timeline_end_ms,
     )
-    planned_laps = bool(laps)
-    if not laps:
+    planned_laps = program_steps is not None
+    if not planned_laps:
         laps = _build_free_laps(
-            segments, threshold, max_gap_ms, record_timer_ms, record_distance_m
+            segments, record_timer_ms, record_distance_m
         )
-    chart_breaks = _chart_breaks(
-        segments, laps, moving_indices, planned_laps, threshold, max_gap_ms
-    )
+    chart_breaks = _chart_breaks(segments)
     timer_ms = sum(segment.timer_time_ms for segment in segments)
-    elapsed_ms = (
-        int(segments[-1].end_time_ms - segments[0].start_time_ms)
-        if segments
-        else 0
-    )
+    elapsed_ms = timeline_end_ms - timeline_start_ms
     laps = _conserve_lap_totals(laps, timer_ms, total_distance, planned_laps)
     if timer_ms > elapsed_ms:
         raise ValueError("Workout is not v1: total timer time exceeds elapsed time")
@@ -508,6 +485,9 @@ def finalize_workout(
         raise ValueError("Workout is not v1: lap timer time exceeds elapsed time")
     return FinalizedWorkout(
         timestamps_ms=timestamps,
+        timeline_start_time_ms=timeline_start_ms,
+        timeline_end_time_ms=timeline_end_ms,
+        record_windows_ms=record_windows_ms,
         segments=tuple(segments),
         laps=tuple(laps),
         chart_break_indices=tuple(sorted(chart_breaks)),

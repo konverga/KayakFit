@@ -44,7 +44,6 @@ class SettingsFields:
     display: list[Any]
     log_interval: Any
     log_level: Any
-    data_points: Any
     auto_upload: Any
     sound_cues: Any
     target_grace: Any
@@ -140,7 +139,6 @@ def open_config_window(
 
     log_interval_var = tk.StringVar(value=str(cfg.get("log_interval", 5)))
     log_level_var = tk.StringVar(value=cfg.get("log_level", "info"))
-    data_points_var = tk.StringVar(value=cfg.get("data_points", "averaged"))
     auto_upload_var = tk.StringVar(value=str(cfg.get("auto_upload", "no")))
     sound_cues_var = tk.StringVar(value=str(cfg.get("sound_cues", "yes")))
     target_grace_var = tk.StringVar(value=str(cfg.get("target_grace_seconds", 3)))
@@ -406,46 +404,34 @@ def open_config_window(
         settings, values=["debug", "info", "warning", "error"], variable=log_level_var, width=110
     ).grid(row=0, column=3, sticky="w", padx=8)
 
-    ctk.CTkLabel(settings, text="Metric source").grid(
-        row=1, column=0, sticky="w", padx=8, pady=6
-    )
-    ctk.CTkOptionMenu(
-        settings, values=["instant", "averaged"], variable=data_points_var, width=110
-    ).grid(row=1, column=1, sticky="w", padx=8)
-    ctk.CTkLabel(
-        settings,
-        text="Averaged matches the ergometer display and calibrated power model",
-        text_color=_MUTED,
-    ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(20, 8))
-
     ctk.CTkLabel(settings, text="Auto-upload to Strava").grid(
-        row=2, column=0, sticky="w", padx=8, pady=6
+        row=1, column=0, sticky="w", padx=8, pady=6
     )
     ctk.CTkSwitch(
         settings, text="", variable=auto_upload_var, onvalue="yes", offvalue="no",
-    ).grid(row=2, column=1, sticky="w", padx=8)
+    ).grid(row=1, column=1, sticky="w", padx=8)
     ctk.CTkLabel(
         settings, text="Upload automatically when a workout ends", text_color=_MUTED
-    ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(20, 8))
+    ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(20, 8))
 
-    ctk.CTkLabel(settings, text="Sound cues").grid(row=3, column=0, sticky="w", padx=8, pady=6)
+    ctk.CTkLabel(settings, text="Sound cues").grid(row=2, column=0, sticky="w", padx=8, pady=6)
     ctk.CTkSwitch(
         settings, text="", variable=sound_cues_var, onvalue="yes", offvalue="no",
-    ).grid(row=3, column=1, sticky="w", padx=8)
+    ).grid(row=2, column=1, sticky="w", padx=8)
     ctk.CTkLabel(
         settings, text="Play a sound on program phase changes", text_color=_MUTED
-    ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(20, 8))
+    ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(20, 8))
 
     ctk.CTkLabel(settings, text="Target grace (s)").grid(
-        row=4, column=0, sticky="w", padx=8, pady=6
+        row=3, column=0, sticky="w", padx=8, pady=6
     )
     ctk.CTkOptionMenu(
         settings, values=["1", "2", "3", "5", "8"], variable=target_grace_var, width=90
-    ).grid(row=4, column=1, sticky="w", padx=8)
+    ).grid(row=3, column=1, sticky="w", padx=8)
     ctk.CTkLabel(
         settings, text="Seconds out of range before the target badge changes",
         text_color=_MUTED,
-    ).grid(row=4, column=2, columnspan=2, sticky="w", padx=(20, 8))
+    ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(20, 8))
 
     # ---- Strava ---------------------------------------------------------
     strava = _section(container, "Strava")
@@ -470,7 +456,7 @@ def open_config_window(
         person_weight=person_weight_var, boat_weight=boat_weight_var,
         max_hr=max_hr_var, hr_zone_mode=hr_zone_mode_var, hr_zones=hr_zone_vars,
         display=display_vars, log_interval=log_interval_var,
-        log_level=log_level_var, data_points=data_points_var,
+        log_level=log_level_var,
         auto_upload=auto_upload_var, sound_cues=sound_cues_var,
         target_grace=target_grace_var, client_id=client_id_var,
         client_secret=client_secret_var,
@@ -710,7 +696,6 @@ def _submit(
         "display_config_numbers": numbers,
         "log_interval": log_interval,
         "log_level": fields.log_level.get(),
-        "data_points": fields.data_points.get(),
         "auto_upload": fields.auto_upload.get(),
         "sound_cues": fields.sound_cues.get(),
         "target_grace_seconds": target_grace,

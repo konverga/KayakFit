@@ -1,15 +1,16 @@
 """
-Tests for planned-step statistics and freestyle autopause grouping.
+Tests for planned-step statistics and exact freestyle activity runs.
 
 Plans define the step/lap structure. The ergometer's active signal selects the
 records used for each step's moving time and averages, so inactive rest remains
-visible without lowering HR/cadence/power. Free workouts use autopause instead.
+visible without lowering HR/cadence/power. Free workouts use exact active runs.
 
 Run from the project root:
 
     python tests/test_program_laps.py
 """
 
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -24,8 +25,8 @@ from app.summary import compute_summary
 from app.table import Table
 
 COLUMNS = [
-    "timestamp", "heart_rate", "cadence", "distance", "speed", "pull_force",
-    "active", "sample_duration",
+    "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
+    "speed_instant", "pull_force", "active", "sample_duration",
 ]
 T0 = 1_700_000_000_000  # arbitrary epoch ms
 
@@ -43,11 +44,12 @@ class _WorkoutBuilder:
         self._d += advance_m
         self.rows.append(
             {
-                "timestamp": T0 + self._i * 1000,
+                "timestamp": T0 + (self._i + 1) * 1000,
+                "session_elapsed": self._i + 1,
                 "heart_rate": 140,
                 "cadence": 70 if advance_m else 0,
                 "distance": self._d,
-                "speed": speed,
+                "speed_instant": speed,
                 "pull_force": 180 if advance_m else 0,
                 "active": 1 if advance_m else 0,
                 "sample_duration": 1,
@@ -66,8 +68,8 @@ class _WorkoutBuilder:
                 "index": len(self.steps),
                 "type": kind,
                 "label": label,
-                "start_ms": T0 + (start_i - 1) * 1000,
-                "end_ms": T0 + (self._i - 1) * 1000,
+                "start_elapsed_s": start_i,
+                "end_elapsed_s": self._i,
             }
         )
 
@@ -107,6 +109,107 @@ def test_summary_uses_program_steps_and_labels_laps() -> None:
     assert s.laps[1].duration_s == 6.0
     assert abs(s.laps[2].start_s - 90.0) < 1e-6
     print("  ok: summary reports active-only averages for every planned step")
+
+
+def test_elapsed_step_bounds_keep_inactive_warmup_and_cooldown() -> None:
+    """Planned elapsed bounds retain inactive edges and ignore receipt jitter."""
+    columns = COLUMNS
+    rows = []
+    for index, (elapsed, active, distance) in enumerate(
+        ((2, 0, 0.0), (4, 1, 4.0), (6, 1, 8.0), (8, 0, 8.0))
+    ):
+        rows.append(
+            {
+                "timestamp": T0 + elapsed * 1000,
+                "session_elapsed": elapsed,
+                "heart_rate": 140,
+                "cadence": 70 if active else 0,
+                "distance": distance,
+                "pull_force": 180 if active else 0,
+                "active": active,
+                "sample_duration": 2,
+                "speed_instant": 2.0 if active else 0.0,
+            }
+        )
+    steps = [
+        {
+            "index": 0,
+            "type": "warmup",
+            "label": "Warm-up",
+            "start_elapsed_s": 0,
+            "end_elapsed_s": 2,
+        },
+        {
+            "index": 1,
+            "type": "work",
+            "label": "Work",
+            "start_elapsed_s": 2,
+            "end_elapsed_s": 6,
+        },
+        {
+            "index": 2,
+            "type": "cooldown",
+            "label": "Cool-down",
+            "start_elapsed_s": 6,
+            "end_elapsed_s": 8,
+        },
+    ]
+
+    summary = compute_summary(Table(columns, rows), program_steps=steps)
+
+    assert summary.elapsed_time_s == 8.0
+    assert summary.active_time_s == 4.0
+    assert [lap.kind for lap in summary.laps] == ["warmup", "work", "cooldown"]
+    assert [lap.start_s for lap in summary.laps] == [0.0, 2.0, 6.0]
+    assert [lap.elapsed_time_s for lap in summary.laps] == [2.0, 4.0, 2.0]
+    assert [lap.active_time_s for lap in summary.laps] == [0.0, 4.0, 0.0]
+    assert [lap.distance_m for lap in summary.laps] == [0.0, 8.0, 0.0]
+    assert summary.series_t == [2.0, 4.0]
+    assert summary.series_time_bounds == (0.0, 8.0)
+
+
+def test_steps_sidecar_persists_device_elapsed_boundaries() -> None:
+    from app.program import load_program
+    from app.workout_session import WorkoutSession
+
+    workout = load_program(
+        {
+            "name": "elapsed sidecar",
+            "steps": [
+                {"type": "work", "duration": {"kind": "time", "seconds": 5}},
+                {"type": "rest", "duration": {"kind": "time", "seconds": 5}},
+            ],
+        }
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        csv_path = Path(directory) / "workout.csv"
+        session = WorkoutSession({"log_level": "warning"}, program=workout)
+        session.csv_path = str(csv_path)
+        session._record_step_boundary(
+            {
+                "transition": "step_start",
+                "step_index": 0,
+                "step": workout.steps[0],
+                "boundary_elapsed": 0.0,
+            }
+        )
+        session._record_step_boundary(
+            {
+                "transition": "step_start",
+                "step_index": 1,
+                "step": workout.steps[1],
+                "boundary_elapsed": 5.0,
+            }
+        )
+        session._last_session_elapsed_s = 8.0
+        session._write_program_steps(close_open=False)
+
+        payload = json.loads((Path(directory) / "steps.json").read_text())
+
+    assert payload["steps"][0]["start_elapsed_s"] == 0.0
+    assert payload["steps"][0]["end_elapsed_s"] == 5.0
+    assert payload["steps"][1]["start_elapsed_s"] == 5.0
+    assert payload["steps"][1]["end_elapsed_s"] == 8.0
 
 
 def test_summary_agrees_with_fit_export() -> None:
@@ -162,11 +265,12 @@ def test_program_lap_is_clipped_to_active_signal() -> None:
     for i, active in enumerate(actives):
         rows.append(
             {
-                "timestamp": T0 + i * 1000,
+                "timestamp": T0 + (i + 1) * 1000,
+                "session_elapsed": i + 1,
                 "heart_rate": 120 + i,
                 "cadence": 70 if active else 0,
                 "distance": distances[i],
-                "speed": 3.0 if active else 0.0,
+                "speed_instant": 3.0 if active else 0.0,
                 "pull_force": 180 if active else 0,
                 "active": active,
                 "sample_duration": 1,
@@ -174,17 +278,18 @@ def test_program_lap_is_clipped_to_active_signal() -> None:
         )
     steps = [
         {
+            "index": 0,
             "type": "work",
             "label": "Work",
-            "start_ms": T0 - 1000,
-            "end_ms": T0 + 6000,
+            "start_elapsed_s": 0,
+            "end_elapsed_s": 7,
         }
     ]
     summary = compute_summary(Table(columns, rows), program_steps=steps)
     assert summary.duration_s == 4.0
     assert len(summary.laps) == 1
     assert summary.series_hr == [121.0, 122.0, 124.0, 125.0]
-    assert summary.series_breaks == [True, False, False, False]
+    assert summary.series_breaks == [True, False, True, False]
     assert summary.laps[0].avg_hr == 123.0
     assert summary.laps[0].avg_spm == 70.0
     print("  ok: planned lap groups active bursts without counting inactive time")
@@ -198,10 +303,11 @@ def test_sample_window_crossing_step_boundary_is_split_exactly() -> None:
         [
             {
                 "timestamp": T0 + 2000,
+                "session_elapsed": 2,
                 "heart_rate": 150,
                 "cadence": 80,
                 "distance": 10.0,
-                "speed": 5.0,
+                "speed_instant": 5.0,
                 "pull_force": 200,
                 "active": 1,
                 "sample_duration": 2.0,
@@ -209,12 +315,13 @@ def test_sample_window_crossing_step_boundary_is_split_exactly() -> None:
         ],
     )
     steps = [
-        {"type": "work", "label": "A", "start_ms": T0, "end_ms": T0 + 1000},
+        {"index": 0, "type": "work", "label": "A", "start_elapsed_s": 0, "end_elapsed_s": 1},
         {
+            "index": 1,
             "type": "rest",
             "label": "B",
-            "start_ms": T0 + 1000,
-            "end_ms": T0 + 2000,
+            "start_elapsed_s": 1,
+            "end_elapsed_s": 2,
         },
     ]
 
@@ -235,10 +342,11 @@ def test_centimetre_split_keeps_every_average_bounded_by_its_maximum() -> None:
         [
             {
                 "timestamp": T0 + 1000,
+                "session_elapsed": 1,
                 "heart_rate": 150,
                 "cadence": 80,
                 "distance": 0.01,
-                "speed": 0.01,
+                "speed_instant": 0.01,
                 "pull_force": 200,
                 "active": 1,
                 "sample_duration": 1.0,
@@ -246,12 +354,13 @@ def test_centimetre_split_keeps_every_average_bounded_by_its_maximum() -> None:
         ],
     )
     steps = [
-        {"type": "work", "label": "A", "start_ms": T0, "end_ms": T0 + 500},
+        {"index": 0, "type": "work", "label": "A", "start_elapsed_s": 0, "end_elapsed_s": 0.5},
         {
+            "index": 1,
             "type": "rest",
             "label": "B",
-            "start_ms": T0 + 500,
-            "end_ms": T0 + 1000,
+            "start_elapsed_s": 0.5,
+            "end_elapsed_s": 1,
         },
     ]
 
@@ -271,14 +380,14 @@ def test_centimetre_split_keeps_every_average_bounded_by_its_maximum() -> None:
 
 
 def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
-    columns = [*COLUMNS, "speed_instant"]
+    columns = COLUMNS
     rows = [
         {
             "timestamp": T0 + 1000,
+            "session_elapsed": 1,
             "heart_rate": 140,
             "cadence": 70,
             "distance": 4.0,
-            "speed": 2.5,
             "speed_instant": 3.0,
             "pull_force": 180,
             "active": 1,
@@ -286,10 +395,10 @@ def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
         },
         {
             "timestamp": T0 + 4000,
+            "session_elapsed": 4,
             "heart_rate": 140,
             "cadence": 70,
             "distance": 7.0,
-            "speed": 2.5,
             "speed_instant": 3.0,
             "pull_force": 180,
             "active": 1,
@@ -297,30 +406,28 @@ def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
         },
     ]
     steps = [
-        {"type": "work", "label": "Fast", "start_ms": T0, "end_ms": T0 + 1000},
+        {"index": 0, "type": "work", "label": "Fast", "start_elapsed_s": 0, "end_elapsed_s": 1},
         {
+            "index": 1,
             "type": "work",
             "label": "Easy",
-            "start_ms": T0 + 1000,
-            "end_ms": T0 + 4000,
+            "start_elapsed_s": 1,
+            "end_elapsed_s": 4,
         },
     ]
 
     summary = compute_summary(Table(columns, rows), program_steps=steps)
 
-    # Speed is one coherent story from the distance channel: averages are
-    # distance/time and peaks come from that same per-record series, never the
-    # instantaneous speed_instant sensor (which reads 3.0 here and is ignored).
-    # Lap 1 covers 4 m in 1 s (4.0 m/s), lap 2 covers 3 m in 3 s (1.0 m/s), and
-    # the session maximum is the fastest canonical record/lap speed.
-    assert [lap.avg_speed_mps for lap in summary.laps] == [4.0, 1.0]
-    assert summary.avg_speed_mps == 1.75
+    # Both laps and the session use the time-weighted instantaneous speed
+    # channel, independently from cumulative odometer allocation.
+    assert [lap.avg_speed_mps for lap in summary.laps] == [3.0, 3.0]
+    assert summary.avg_speed_mps == 3.0
     assert summary.avg_speed_mps == sum(
         (lap.avg_speed_mps or 0.0) * lap.active_time_s for lap in summary.laps
     ) / summary.active_time_s
-    assert summary.max_speed_mps == 4.0
+    assert summary.max_speed_mps == 3.0
     # The hierarchy can never contradict itself: every peak is at least its own
-    # average and is drawn from distance rather than the 3.0 sensor reading.
+    # average and is drawn from the same recorded sensor channel.
     lap_averages = [
         value
         for lap in summary.laps
@@ -337,18 +444,18 @@ def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
         for average, maximum in zip(lap_averages, lap_maxima, strict=True)
     )
     assert summary.max_speed_mps == max(lap_maxima)
-    assert summary.max_speed_mps != 3.0
 
 
-def test_terminal_planned_step_owns_the_complete_recorded_tail() -> None:
-    """Natural completion may land inside a sample with a packet already buffered."""
+def test_terminal_planned_step_uses_the_persisted_session_endpoint() -> None:
+    """Capture persists the final performed endpoint, including sensor granularity."""
     rows = [
         {
             "timestamp": T0 + i * 1000,
+            "session_elapsed": i,
             "heart_rate": 140,
             "cadence": 70,
             "distance": float(i * 3),
-            "speed": 3.0,
+            "speed_instant": 3.0,
             "pull_force": 180,
             "active": 1,
             "sample_duration": 1,
@@ -359,9 +466,9 @@ def test_terminal_planned_step_owns_the_complete_recorded_tail() -> None:
         {
             "type": "work",
             "label": "10 m",
-            "start_ms": T0,
-            # A 10 m distance target crossed in the fourth 1-second sample.
-            "end_ms": T0 + 3_333,
+            "index": 0,
+            "start_elapsed_s": 0,
+            "end_elapsed_s": 5,
         }
     ]
 
@@ -377,20 +484,21 @@ def test_terminal_planned_step_owns_the_complete_recorded_tail() -> None:
 
 
 @pytest.mark.parametrize("resume_speed", [0.0, None, "invalid", float("nan")])
-def test_resume_odometer_jump_is_not_credited_without_valid_speed(
+def test_resume_odometer_jump_is_credited_independently_of_speed(
     resume_speed: Any,
 ) -> None:
-    """A resume packet without positive finite speed cannot justify an odometer jump."""
+    """Speed validity never rewrites cumulative distance."""
     distances = [3.0, 6.0, 6.0, 6.0, 18.0, 21.0]
     speeds: list[Any] = [3.0, 3.0, 0.0, 0.0, resume_speed, 3.0]
     actives = [1, 1, 0, 0, 1, 1]
     rows = [
         {
-            "timestamp": T0 + i * 1000,
+            "timestamp": T0 + (i + 1) * 1000,
+            "session_elapsed": i + 1,
             "heart_rate": 140,
             "cadence": 70 if active else 0,
             "distance": distances[i],
-            "speed": speeds[i],
+            "speed_instant": speeds[i],
             "pull_force": 180 if active else 0,
             "active": active,
             "sample_duration": 1,
@@ -400,9 +508,9 @@ def test_resume_odometer_jump_is_not_credited_without_valid_speed(
 
     finalized = finalize_workout(Table(COLUMNS, rows))
 
-    assert finalized.total_distance_m == 9.0
-    assert finalized.record_cumulative_distance_m[4] == 6.0
-    assert finalized.record_cumulative_distance_m[5] == 9.0
+    assert finalized.total_distance_m == 21.0
+    assert finalized.record_cumulative_distance_m[4] == 18.0
+    assert finalized.record_cumulative_distance_m[5] == 21.0
 
 
 def test_meaningful_pause_breaks_chart_without_splitting_planned_lap() -> None:
@@ -416,11 +524,12 @@ def test_meaningful_pause_breaks_chart_without_splitting_planned_lap() -> None:
             distance += 3.0
         rows.append(
             {
-                "timestamp": T0 + i * 1000,
+                "timestamp": T0 + (i + 1) * 1000,
+                "session_elapsed": i + 1,
                 "heart_rate": 130 + i,
                 "cadence": 70 if active else 0,
                 "distance": distance,
-                "speed": 3.0 if active else 0.0,
+                "speed_instant": 3.0 if active else 0.0,
                 "pull_force": 180 if active else 0,
                 "active": active,
                 "sample_duration": 1,
@@ -428,10 +537,11 @@ def test_meaningful_pause_breaks_chart_without_splitting_planned_lap() -> None:
         )
     steps = [
         {
+            "index": 0,
             "type": "work",
             "label": "Long work",
-            "start_ms": T0 - 1000,
-            "end_ms": T0 + 8000,
+            "start_elapsed_s": 0,
+            "end_elapsed_s": 9,
         }
     ]
     summary = compute_summary(Table(columns, rows), program_steps=steps)
@@ -472,11 +582,12 @@ def test_summary_keeps_motionless_rest_as_empty_planned_step() -> None:
             distance += 3.0
         rows.append(
             {
-                "timestamp": T0 + i * 1000,
+                "timestamp": T0 + (i + 1) * 1000,
+                "session_elapsed": i + 1,
                 "heart_rate": 140 if active else 100,
                 "cadence": 70 if active else 0,
                 "distance": distance,
-                "speed": 3.0 if active else 0.0,
+                "speed_instant": 3.0 if active else 0.0,
                 "pull_force": 180 if active else 0,
                 "active": active,
                 "sample_duration": 1,
@@ -487,22 +598,22 @@ def test_summary_keeps_motionless_rest_as_empty_planned_step() -> None:
             "index": 0,
             "type": "work",
             "label": "Work 1",
-                "start_ms": T0 - 1000,
-            "end_ms": T0 + 9000,
+            "start_elapsed_s": 0,
+            "end_elapsed_s": 10,
         },
         {
             "index": 1,
             "type": "rest",
             "label": "Rest",
-            "start_ms": T0 + 9000,
-            "end_ms": T0 + 14000,
+            "start_elapsed_s": 10,
+            "end_elapsed_s": 15,
         },
         {
             "index": 2,
             "type": "work",
             "label": "Work 2",
-            "start_ms": T0 + 14000,
-            "end_ms": T0 + 24000,
+            "start_elapsed_s": 15,
+            "end_elapsed_s": 25,
         },
     ]
     summary = compute_summary(Table(columns, rows), program_steps=steps)
@@ -527,26 +638,27 @@ def test_planned_rest_survives_a_recording_gap() -> None:
     columns = COLUMNS
     rows = [
         {
-            "timestamp": T0 + offset,
+            "timestamp": T0 + elapsed * 1000,
+            "session_elapsed": elapsed,
             "heart_rate": 140,
             "cadence": 70,
             "distance": float(i * 3),
-            "speed": 3.0,
+            "speed_instant": 3.0,
             "pull_force": 180,
             "active": 1,
             "sample_duration": 1,
         }
-        for i, offset in enumerate((0, 1000, 7000, 8000), start=1)
+        for i, elapsed in enumerate((1, 2, 8, 9), start=1)
     ]
     steps = [
-        {"type": "work", "label": "Work 1", "start_ms": T0 - 1000, "end_ms": T0 + 1000},
-        {"type": "rest", "label": "Rest", "start_ms": T0 + 2000, "end_ms": T0 + 6000},
-        {"type": "work", "label": "Work 2", "start_ms": T0 + 6000, "end_ms": T0 + 8000},
+        {"index": 0, "type": "work", "label": "Work 1", "start_elapsed_s": 0, "end_elapsed_s": 2},
+        {"index": 1, "type": "rest", "label": "Rest", "start_elapsed_s": 2, "end_elapsed_s": 7},
+        {"index": 2, "type": "work", "label": "Work 2", "start_elapsed_s": 7, "end_elapsed_s": 9},
     ]
     summary = compute_summary(Table(columns, rows), program_steps=steps)
     assert [lap.kind for lap in summary.laps] == ["work", "rest", "work"]
     rest = summary.laps[1]
-    assert rest.duration_s == 0.0 and rest.elapsed_s == 4.0
+    assert rest.duration_s == 0.0 and rest.elapsed_s == 5.0
     assert rest.avg_hr is None
     print("  ok: planned rest remains visible even when no idle row was recorded")
 
@@ -559,7 +671,7 @@ def test_all_malformed_steps_are_rejected() -> None:
         "nope",
         123,
         None,
-        {"start_ms": "x", "end_ms": "y"},
+        {"start_elapsed_s": "x", "end_elapsed_s": "y"},
     ]
     table, _steps = b.build()
     with pytest.raises(ValueError, match="invalid step"):
@@ -571,7 +683,7 @@ def test_summary_rejects_partially_malformed_steps() -> None:
     table, steps = b.build()
     bad_steps = list(steps)
     bad_steps.insert(1, "oops-not-a-dict")          # Case A
-    bad_steps.append({"start_ms": "x", "end_ms": 5})  # Case B
+    bad_steps.append({"start_elapsed_s": "x", "end_elapsed_s": 5})  # Case B
 
     with pytest.raises(ValueError, match="invalid step"):
         compute_summary(table, program_steps=bad_steps)

@@ -12,11 +12,14 @@ This avoids any Bluetooth / GUI dependency and exercises:
 """
 
 import contextlib
+import json
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+
+import pytest
 
 # Allow running directly from the project root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,14 +42,112 @@ from app.workout_paths import WorkoutPaths
 
 CONFIG = {
     "log_level": "warning",
-    "data_points": "instant",
     "pull_length_m": 0.623,
-    "autopause_stationary_threshold_records": 5,
-    "autopause_gap_seconds": 5,
     "max_hr": 185,
     "hr_zone_mode": "auto",
     "hr_zones": [],
 }
+
+
+def test_recorded_free_workout_golden_metrics() -> None:
+    """Reproduce workout_20260717_210142 from its recorded data points."""
+    elapsed_groups = [
+        list(range(1, 18)),
+        [18, 20, 21, 22, 23, 24],
+        list(range(25, 38)),
+        [38, 40, 41, 42, 43, 44, 45],
+        list(range(46, 55)),
+        [55, 56, 57, 58, 60, 61, 62],
+    ]
+    distance_groups = [
+        [1, 3, 6, 8, 13, 16, 19, 21, 24, 27, 29, 32, 34, 39, 42, 44, 47],
+        [47] * 6,
+        [53, 56, 59, 63, 65, 68, 70, 74, 76, 78, 81, 85, 87],
+        [87] * 7,
+        [94, 97, 100, 104, 107, 109, 113, 114, 117],
+        [117] * 7,
+    ]
+    speed_groups = [
+        [0.72, 1.19, 1.54, 2.07, 2.77, 2.84, 2.77, 2.80, 2.73,
+         2.74, 2.66, 2.72, 2.70, 2.76, 2.81, 2.78, 2.83],
+        [0.0] * 6,
+        [2.40, 2.43, 2.48, 2.41, 2.73, 2.69, 2.60, 2.61, 2.65,
+         2.56, 2.63, 2.64, 2.65],
+        [0.0] * 7,
+        [2.37, 2.34, 2.37, 2.35, 2.68, 2.70, 2.54, 2.51, 2.53],
+        [0.0] * 7,
+    ]
+    active_groups = [1, 0, 1, 0, 1, 0]
+    rows: list[dict[str, Any]] = []
+    previous_end_s = 0
+    for elapsed, distances, speeds, active in zip(
+        elapsed_groups, distance_groups, speed_groups, active_groups, strict=True
+    ):
+        for end_s, distance_m, speed_mps in zip(
+            elapsed, distances, speeds, strict=True
+        ):
+            rows.append(
+                {
+                    "timestamp": 1_784_314_902_544 + end_s * 1000,
+                    "session_elapsed": end_s,
+                    "sample_duration": end_s - previous_end_s,
+                    "heart_rate": 120,
+                    "cadence": 60 if active else 0,
+                    "distance": distance_m,
+                    "speed_instant": speed_mps,
+                    "pull_force": 100 if active else 0,
+                    "active": active,
+                }
+            )
+            previous_end_s = end_s
+    columns = list(rows[0])
+    summary = compute_summary(Table(columns, rows), config=CONFIG)
+
+    assert summary.active_time_s == 39.0
+    assert summary.elapsed_time_s == 62.0
+    assert summary.pause_time_s == 23.0
+    assert summary.distance_m == 117.0
+    assert [lap.start_s for lap in summary.laps] == [0.0, 24.0, 45.0]
+    assert [lap.active_time_s for lap in summary.laps] == [17.0, 13.0, 9.0]
+    assert [lap.distance_m for lap in summary.laps] == [47.0, 40.0, 30.0]
+    assert [round((lap.avg_speed_mps or 0.0) * 3.6, 2) for lap in summary.laps] == [
+        8.77, 9.27, 8.96
+    ]
+    assert round((summary.max_speed_mps or 0.0) * 3.6, 2) == 10.22
+    assert summary.series_time_bounds == (0.0, 62.0)
+    assert sum(lap.active_time_s for lap in summary.laps) == summary.active_time_s
+    assert sum(lap.distance_m for lap in summary.laps) == summary.distance_m
+
+
+def test_canonical_fields_own_intervals() -> None:
+    """Explicit session endpoints and durations own the processing clock."""
+    rows = [
+        {
+            "timestamp": 1_700_000_000_000 + elapsed * 1000,
+            "session_elapsed": elapsed,
+            "heart_rate": 120,
+            "cadence": 60 if active else 0,
+            "distance": distance,
+            "speed_instant": 2.0 if active else 0.0,
+            "pull_force": 100 if active else 0,
+            "active": active,
+            "sample_duration": elapsed - (0 if index == 0 else (2, 5, 6)[index - 1]),
+        }
+        for index, (elapsed, active, distance) in enumerate(
+            ((2, 0, 0.0), (5, 1, 6.0), (6, 1, 8.0))
+        )
+    ]
+
+    summary = compute_summary(Table(list(rows[0]), rows), config=CONFIG)
+
+    assert summary.elapsed_time_s == 6.0
+    assert summary.active_time_s == 4.0
+    assert summary.pause_time_s == 2.0
+    assert summary.series_t == [2.0, 5.0]
+    assert summary.series_time_bounds == (0.0, 6.0)
+    assert summary.laps[0].start_s == 2.0
+    assert summary.laps[0].elapsed_time_s == 4.0
+    assert summary.laps[0].distance_m == summary.distance_m == 8.0
 
 
 def _row(i: int) -> dict[str, Any]:
@@ -54,6 +155,8 @@ def _row(i: int) -> dict[str, Any]:
     base_ts = 1_700_000_000_000  # fixed ms epoch for determinism
     return {
         "timestamp": base_ts + i * 1000,
+        "session_elapsed__s": i + 1,
+        "sample_duration__s": 1,
         "heart_rate__bpm": 120 + (i % 20),
         "kayakfirst_timestamp": base_ts + i * 1000,
         "col_2": 0, "col_3": 0,
@@ -67,7 +170,7 @@ def _row(i: int) -> dict[str, Any]:
         "pace_500m__s": 156, "pace_500m_instant__s": 156,
         "pace_1000m__s": 312, "pace_1000m_instant__s": 312,
         "pull_force__n": 200, "pull_force_instant__n": 200,
-        "elapsed_time__s": i,
+        "elapsed_time__s": i + 1,
         "window_size__s": 1,
     }
 
@@ -123,7 +226,7 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         # finalized FIT record domain must rebase it so those ten metres do not
         # leak into the session, chart, or downstream platform totals.
         distances = [10.0, 13.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 29.0, 32.0]
-        rows[0]["window_size__s"] = 2
+        rows[0]["sample_duration__s"] = 1
         for i, row in enumerate(rows):
             row["distance__m"] = f"{distances[i]:.2f}"
             if 3 <= i <= 7:
@@ -137,7 +240,7 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         csv_path.write_text("\n".join(_write_cols) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all("instant")
+        table = CsvReader(str(csv_path), CONFIG).read_all()
         summary = compute_summary(table, config=CONFIG)
         result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
         assert result["success"], result
@@ -150,8 +253,8 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         anchors = [record for record in records if "heart_rate" not in record]
 
         assert session["total_distance"] == summary.distance_m == 22.0
-        assert session["total_timer_time"] == summary.duration_s == 6.0
-        assert session["total_elapsed_time"] == summary.elapsed_time_s == 11.0
+        assert session["total_timer_time"] == summary.duration_s == 5.0
+        assert session["total_elapsed_time"] == summary.elapsed_time_s == 10.0
         assert summary.pause_time_s == 5.0
         assert sum(
             lap.elapsed_time_s + lap.pause_after_s for lap in summary.laps
@@ -189,7 +292,7 @@ def test_decoded_fit_exactly_matches_summary() -> None:
                 (records[end_index]["timestamp"] - records[start_index]["timestamp"])
                 / 1000.0
             )
-        assert gps_spans == [4.0, 2.0]
+        assert gps_spans == [3.0, 2.0]
         assert sum(gps_spans) == session["total_timer_time"]
 
         # GPS is derived from the rebased active-only distance, not the raw
@@ -220,22 +323,11 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         assert summary.series_breaks == [True, False, False, True, False]
 
 
-def test_speed_peaks_derive_from_distance_channel_not_instantaneous_sensor() -> None:
-    """One coherent speed story: chart, average and peak all come from the
-    distance channel, and each FIT speed matches its own record window.
-
-    The recording holds five slow seconds (2 m each) then five fast seconds
-    (4 m each): distance/time averages 3.0 m/s and the distance-derived peak is
-    4.0 m/s. A single large ``speed_instant`` blip (9.0 m/s) is planted in the
-    fast section; because the peak no longer comes from that sensor channel it
-    is ignored, so it appears in neither ``max_speed`` nor the exported record
-    speeds. The reported max is at least the average, no exported record is
-    faster than the session max, and every exported speed matches its active
-    record window.
-    """
+def test_speed_statistics_and_fit_records_use_instantaneous_sensor() -> None:
+    """Summary, graph and FIT all retain the recorded speed channel."""
     with tempfile.TemporaryDirectory() as d:
         csv_path = Path(d) / "workout.csv"
-        config = dict(CONFIG, data_points="averaged")
+        config = dict(CONFIG)
         rows = []
         cumulative = 0.0
         for i in range(10):
@@ -250,7 +342,7 @@ def test_speed_peaks_derive_from_distance_channel_not_instantaneous_sensor() -> 
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, config, "free")
 
-        table = CsvReader(str(csv_path), config).read_all("averaged")
+        table = CsvReader(str(csv_path), config).read_all()
         summary = compute_summary(table, config=config)
         result = FitExporter.convert_csv_to_fit(str(csv_path), config)
         assert result["success"], result
@@ -260,13 +352,10 @@ def test_speed_peaks_derive_from_distance_channel_not_instantaneous_sensor() -> 
         records = _fit_data_messages(Path(result["file_path"]), "record")
         sensor_speeds = [record["speed"] for record in records if "speed" in record]
 
-        # Average is distance / time; peak is the raw distance-derived peak (4.0),
-        # never the 9.0 instantaneous blip.
-        assert summary.avg_speed_mps == 3.0
-        assert summary.max_speed_mps == 4.0
-        assert 9.0 not in sensor_speeds
+        assert summary.avg_speed_mps == 3.6
+        assert summary.max_speed_mps == 9.0
         assert max(sensor_speeds) == summary.max_speed_mps
-        assert sensor_speeds == [2.0] * 5 + [4.0] * 5
+        assert sensor_speeds == [3.0] * 7 + [9.0] + [3.0] * 2
 
         # Summary and FIT session agree, and the FIT file is self-consistent.
         assert session["avg_speed"] == summary.avg_speed_mps
@@ -277,8 +366,7 @@ def test_speed_peaks_derive_from_distance_channel_not_instantaneous_sensor() -> 
         assert session["max_speed"] >= max(lap["max_speed"] for lap in laps)
 
 
-def test_resumed_distance_jump_keeps_fit_and_summary_splits_consistent() -> None:
-    """A delayed odometer update may not inflate the resumed FIT lap."""
+def test_resumed_distance_jump_is_preserved_consistently() -> None:
     with tempfile.TemporaryDirectory() as d:
         csv_path = Path(d) / "resume-jump.csv"
         rows = [_row(i) for i in range(6)]
@@ -293,12 +381,13 @@ def test_resumed_distance_jump_keeps_fit_and_summary_splits_consistent() -> None
                 row["pull_force__n"] = row["pull_force_instant__n"] = 0
             if i >= 4:
                 row["timestamp"] = int(row["timestamp"]) + 6000
+                row["session_elapsed__s"] = int(row["session_elapsed__s"]) + 6
         lines = [";".join(ALL_FIELDS)]
         lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all("instant")
+        table = CsvReader(str(csv_path), CONFIG).read_all()
         summary = compute_summary(table, config=CONFIG)
         result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
         assert result["success"], result
@@ -308,11 +397,11 @@ def test_resumed_distance_jump_keeps_fit_and_summary_splits_consistent() -> None
         sensor_records = [record for record in records if "heart_rate" in record]
         anchors = [record for record in records if "heart_rate" not in record]
 
-        assert [item.distance_m for item in summary.laps] == [6.0, 6.0]
+        assert [item.distance_m for item in summary.laps] == [6.0, 15.0]
         assert [item.avg_speed_mps for item in summary.laps] == [3.0, 3.0]
-        assert [lap["total_distance"] for lap in laps] == [6.0, 6.0]
+        assert [lap["total_distance"] for lap in laps] == [6.0, 15.0]
         assert [lap["avg_speed"] for lap in laps] == [3.0, 3.0]
-        assert [record["distance"] for record in sensor_records] == [3.0, 6.0, 9.0, 12.0]
+        assert [record["distance"] for record in sensor_records] == [3.0, 6.0, 18.0, 21.0]
         assert [record["distance"] for record in anchors] == [0.0, 6.0]
         assert all("position_lat" in record for record in records)
         assert all("position_long" in record for record in records)
@@ -334,17 +423,14 @@ def test_active_signal_excludes_heart_rate_prefix_and_tail() -> None:
                 row["speed__mps"] = row["speed_instant__mps"] = "0.00"
                 row["cadence__spm"] = row["cadence_instant__spm"] = 0
                 row["pull_force__n"] = row["pull_force_instant__n"] = 0
-        # The middle active row represents two ergometer seconds. Timer time
-        # must follow these device windows, not app receipt timestamp deltas.
+        # Raw device timing is diagnostic and cannot change canonical timing.
         rows[3]["window_size__s"] = 2
-        for i in range(3, len(rows)):
-            rows[i]["timestamp"] = int(rows[i]["timestamp"]) + 1000
         lines = [";".join(ALL_FIELDS)]
         lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all("instant")
+        table = CsvReader(str(csv_path), CONFIG).read_all()
         summary = compute_summary(table, config=CONFIG)
         result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
         assert result["success"], result
@@ -353,9 +439,10 @@ def test_active_signal_excludes_heart_rate_prefix_and_tail() -> None:
         records = _fit_data_messages(fit_path, "record")
         sensor_records = [record for record in records if "heart_rate" in record]
 
-        assert summary.duration_s == session["total_timer_time"] == 4.0
+        assert summary.duration_s == session["total_timer_time"] == 3.0
+        assert summary.elapsed_time_s == session["total_elapsed_time"] == 7.0
         assert summary.series_hr == [120.0, 125.0, 130.0]
-        assert summary.series_t[0] == 0.0
+        assert summary.series_t[0] == 2.0
         assert summary.series_breaks == [True, False, False]
         assert summary.max_hr == session["max_heart_rate"] == 130
         assert [record["heart_rate"] for record in sensor_records] == [120, 125, 130]
@@ -381,26 +468,28 @@ def test_decoded_planned_laps_match_active_only_step_summary() -> None:
         lines = [";".join(ALL_FIELDS)]
         lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        table = CsvReader(str(csv_path), CONFIG).read_all("instant")
-        t0 = int(rows[0]["timestamp"])
+        table = CsvReader(str(csv_path), CONFIG).read_all()
         steps = [
             {
+                "index": 0,
                 "type": "work",
                 "label": "Work 1",
-                "start_ms": t0 - 1000,
-                "end_ms": t0 + 4000,
+                "start_elapsed_s": 0,
+                "end_elapsed_s": 5,
             },
             {
+                "index": 1,
                 "type": "rest",
                 "label": "Rest",
-                "start_ms": t0 + 4000,
-                "end_ms": t0 + 9000,
+                "start_elapsed_s": 5,
+                "end_elapsed_s": 10,
             },
             {
+                "index": 2,
                 "type": "work",
                 "label": "Work 2",
-                "start_ms": t0 + 9000,
-                "end_ms": t0 + 14000,
+                "start_elapsed_s": 10,
+                "end_elapsed_s": 15,
             },
         ]
         summary = compute_summary(table, program_steps=steps, config=CONFIG)
@@ -434,20 +523,22 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
     rows = [
         {
             "timestamp": base + 4_320_000,
+            "session_elapsed": 4_320,
             "heart_rate": 140,
             "cadence": 70,
             "distance": 12_960.0,
-            "speed": 3.0,
+            "speed_instant": 3.0,
             "pull_force": 180,
             "active": 1,
             "sample_duration": 4_320,
         },
         {
             "timestamp": base + 4_321_000,
+            "session_elapsed": 4_321,
             "heart_rate": 140,
             "cadence": 70,
             "distance": 12_963.0,
-            "speed": 3.0,
+            "speed_instant": 3.0,
             "pull_force": 180,
             "active": 1,
             "sample_duration": 1,
@@ -456,10 +547,11 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
     table = Table(
         [
             "timestamp",
+            "session_elapsed",
             "heart_rate",
             "cadence",
             "distance",
-            "speed",
+            "speed_instant",
             "pull_force",
             "active",
             "sample_duration",
@@ -497,6 +589,19 @@ def test_export_uses_recorded_processing_config() -> None:
         assert session["avg_power"] == 213
 
 
+def test_metadata_rejects_removed_processing_keys() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        csv_path = Path(directory) / "strict.csv"
+        save_workout_metadata(csv_path, CONFIG, "free")
+        metadata_path = WorkoutPaths.from_csv(csv_path).metadata
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        payload["processing_config"]["data_points"] = "instant"
+        metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="schema mismatch"):
+            load_workout_config(csv_path)
+
+
 def test_failed_export_preserves_existing_fit() -> None:
     """A failed replacement must not delete the last valid FIT file."""
     with tempfile.TemporaryDirectory() as d:
@@ -504,7 +609,7 @@ def test_failed_export_preserves_existing_fit() -> None:
         fit_path = WorkoutPaths.from_csv(csv_path).fit
         _write_csv(csv_path, rows=10)
         fit_path.write_bytes(b"previous-valid-fit")
-        table = CsvReader(str(csv_path), CONFIG).read_all("instant")
+        table = CsvReader(str(csv_path), CONFIG).read_all()
 
         class _FailingFit:
             def to_file(self, path: str) -> None:

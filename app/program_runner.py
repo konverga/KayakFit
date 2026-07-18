@@ -8,9 +8,10 @@ the recording layer can persist a precise performed-step timeline.
 """
 
 from collections.abc import Callable
+from math import isfinite
 from typing import Any
 
-from .coerce import to_float_or
+from .coerce import to_float
 from .program import DISTANCE, OPEN, TIME, Program, Step
 
 
@@ -38,6 +39,7 @@ class ProgramRunner:
         self._distance = 0.0
         self._previous_elapsed = 0.0
         self._previous_distance = 0.0
+        self._last_raw_distance: float | None = None
 
     @property
     def current(self) -> Step | None:
@@ -189,26 +191,39 @@ class ProgramRunner:
         if self.done:
             return self._result([])
 
-        sample_start_elapsed = self._previous_elapsed
-        sample_start_distance = self._previous_distance
-        self._elapsed = to_float_or(elapsed_s, self._elapsed)
-        self._distance = to_float_or(distance_m, self._distance)
+        current_elapsed = to_float(elapsed_s)
+        represented_s = to_float(sample_duration_s)
+        if (
+            current_elapsed is None
+            or not isfinite(current_elapsed)
+            or current_elapsed < self._previous_elapsed
+            or represented_s is None
+            or not isfinite(represented_s)
+            or represented_s < 0
+            or represented_s > current_elapsed - self._previous_elapsed
+        ):
+            raise ValueError("ProgramRunner requires canonical non-overlapping timing")
+
+        sample_start_elapsed = current_elapsed - represented_s
+        sample_start_distance = self._distance
+        self._elapsed = current_elapsed
+        raw_distance = to_float(distance_m)
+        if raw_distance is not None and isfinite(raw_distance) and raw_distance >= 0:
+            if self._last_raw_distance is None:
+                self._distance += raw_distance
+            else:
+                self._distance += max(raw_distance - self._last_raw_distance, 0.0)
+            self._last_raw_distance = raw_distance
         transitions: list[dict[str, Any]] = []
 
         if not self._started:
             self._started = True
-            represented_s = max(to_float_or(sample_duration_s, 0.0), 0.0)
-            sample_start_elapsed = self._elapsed - represented_s
-            # Workout distance is cumulative from zero. When the first packet
-            # represents an interval, its measured distance belongs to that
-            # interval instead of becoming an uncounted baseline.
-            sample_start_distance = 0.0 if represented_s > 0 else self._distance
-            self._begin_step(sample_start_elapsed, sample_start_distance)
+            self._begin_step(0.0, 0.0)
             transitions.append(
                 self._emit_transition(
                     "step_start",
-                    sample_start_elapsed,
-                    sample_start_distance,
+                    0.0,
+                    0.0,
                     initial=True,
                 )
             )

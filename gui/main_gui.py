@@ -104,7 +104,8 @@ class KayakFitGUI(
         self.tile_value_colors: dict[str, Any] = {}
         self._tiles_dimmed = False
         self._stats: dict[str, dict[str, Any]] = {}
-        # Live speed preview mirroring the finalized avg/max contract.
+        # Active time/distance tracker; finalized speed remains available for
+        # reconciliation but dashboard speed cards use averaged device fields.
         self._live_speed = LiveSpeedTracker()
 
         # Liveness / staleness timing (monotonic seconds).

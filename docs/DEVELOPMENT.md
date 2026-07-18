@@ -123,11 +123,12 @@ BLE packets -> CSV observation log -> CsvReader -> FinalizedWorkout
 ```
 
 - CSV capture retains valid stationary and repeated observations.
-- The ergometer's `active_paddling` signal owns activity membership when
-  present; heart rate never extends the activity.
+- The required ergometer `active_paddling` signal owns activity membership;
+  heart rate never extends the activity.
 - `finalize_workout()` owns records, timer runs, laps, active distance, and
   totals used by FIT and the summary.
-- Samples with `sample_duration` represent intervals ending at their timestamp.
+- Canonical samples represent `[session_elapsed - sample_duration,
+  session_elapsed]`; a zero-duration observation owns no activity time.
 - Planned samples may be split across exact performed-step boundaries.
 - Chart smoothing is presentation-only and must not redefine statistics.
 

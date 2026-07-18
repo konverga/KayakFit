@@ -22,8 +22,8 @@ does not imply that every current code path satisfies it perfectly.
 ## D002 — Ergometer activity, not heart rate, owns workout timing
 
 - **Status:** Accepted
-- **Decision:** `active_paddling` is required; values greater than zero select
-  active records and zero selects inactive records. HR notifications update a
+- **Decision:** `active_paddling` is required; `1` selects active represented
+  windows and `0` selects inactive windows. HR notifications update a
   latest-value cache but never create rows or extend the workout.
 - **Rationale:** The ergometer directly signals whether the athlete is paddling.
   HR can begin before paddling and continue through recovery, producing the
@@ -56,15 +56,13 @@ does not imply that every current code path satisfies it perfectly.
   `app.stats.aggregate_metrics()` defines each slice's arithmetic.
 - **Rules:**
   - HR, cadence, and estimated power average only valid positive readings.
-  - These averages use represented sample duration when available.
-  - Average speed is covered distance divided by active timer time.
-  - Maximum speed is the largest canonical record speed: attributed active
-    distance divided by represented active duration (`app.speed_series`, see
-    D017), never the raw sensor speed channel.
+  - These averages use canonical represented sample duration.
+  - Average speed is the represented-time-weighted mean of valid active
+    `speed_instant` readings (see D017).
+  - Maximum speed is the largest valid active instantaneous-speed reading.
   - Every reported average/maximum pair satisfies `average <= maximum` before
     FIT encoding or UI rounding.
-  - FIT speed records use that canonical unsmoothed series, so record distance,
-    represented duration and speed describe the same measurement.
+  - FIT speed records use that same unsmoothed recorded series.
   - Integer FIT/summary averages use nearest-integer rounding, not truncation.
   - FIT-compatible limits filter values that cannot be encoded truthfully.
 - **Rationale:** Generic column means and independently repeated calculations
@@ -74,18 +72,24 @@ does not imply that every current code path satisfies it perfectly.
   splits show finalized distance and millisecond timing without redistributing
   rounded display units.
 
-## D005 — Sensor samples represent preceding time windows
+## D005 — Capture persists the canonical processing timeline
 
 - **Status:** Accepted
-- **Decision:** `window_size__s`/`sample_duration` represents the interval ending
-  at the row timestamp. The first active record therefore contributes time
-  before its timestamp, and FIT START can precede the first emitted record.
-- **Rationale:** Treating samples as zero-duration points loses the first second
-  and makes duration depend on callback timing rather than the ergometer's
-  represented window.
-- **Presentation decision:** Summary charts use the first emitted record as
-  visual time zero to avoid drawing a false blank tail. Headline timer values
-  still include the represented first window.
+- **Decision:** Capture writes `session_elapsed__s` and `sample_duration__s` for
+  every row. The row represents
+  `[session_elapsed - sample_duration, session_elapsed]`; `timestamp` is that
+  endpoint on one epoch origin. Raw device elapsed/window/timestamp fields are
+  diagnostics and never processing fallbacks.
+- **Capture rule:** Advancing raw elapsed moves the canonical endpoint by its
+  delta. A stall/reset rebases to monotonic receipt time. Effective duration is
+  clipped to avoid overlap, leaving all uncovered time as pause time. A first
+  elapsed value of zero is a valid zero-duration observation.
+- **Rationale:** The raw counter can stall or reset after reconnect. Persisting
+  the normalized result once makes final processing strict, simple, and fully
+  reproducible without recreating capture-time state.
+- **Presentation decision:** Summary chart bounds span elapsed zero through the
+  final canonical session endpoint, including inactive prefixes and tails. Active
+  points are plotted at the start of their represented intervals.
 - **Boundary policy:** Planned laps receive the exact overlap between the sample
   window and each performed step. Time-weighted metrics and distance are split
   by the same overlap fraction.
@@ -95,7 +99,7 @@ does not imply that every current code path satisfies it perfectly.
 - **Status:** Accepted
 - **Decision:** Activity selection is independent of the plan. After active
   records are selected:
-  - free workouts group exact runs into natural laps using autopause thresholds;
+  - free workouts use every exact active run as one lap;
   - planned workouts group records by performed warm-up/work/rest/cooldown step.
 - **Rationale:** A plan describes user-facing structure, not permission to count
   idle samples. Conversely, movement pauses should not fragment a planned work
@@ -110,8 +114,9 @@ does not imply that every current code path satisfies it perfectly.
 - **Decision:** Save processing inputs in `metadata.json` and performed planned
   boundaries in `steps.json` inside each workout directory. Export and summary
   use only those recorded settings.
-- **Captured inputs:** Pull length, instant/averaged field mode, autopause
-  thresholds, HR zone configuration, and other versioned processing inputs.
+- **Captured inputs:** Pull length and HR zone configuration. Metric channels
+  are fixed by the v1 processing contract, not stored as user preferences.
+  Activity timing has no user-configurable threshold or gap.
 - **Rationale:** Changing current settings must not retroactively change an old
   workout's power, segmentation, or zones.
 - **Failure policy:** Missing, incomplete, malformed, or unsupported metadata is
@@ -238,31 +243,46 @@ does not imply that every current code path satisfies it perfectly.
   is recreated. Disconnect removes the vault entry. Incomplete pre-release
   entries are deleted rather than migrated.
 
-## D017 — One speed story: every speed value derives from the distance channel
+## D017 — Recorded instantaneous speed is the canonical speed channel
 
 - **Status:** Accepted
-- **Decision:** All reported speed comes from finalized active distance
-  (`app.speed_series`), not the sensor speed channels. Average is distance /
-  active time. Canonical record speed is attributed active distance /
-  represented active duration; maximum is its peak and FIT records carry it
-  verbatim. Chart smoothing is presentation-only and preserves the raw maximum
-  point so the chart does not appear to contradict the headline max. Live and
-  batch processing use the same `ActiveDistanceAccumulator` pause/resume/bridging
-  rules.
-- **Rationale:** Chart line, table averages, reported peaks, live preview and
-  FIT records previously mixed sources and could contradict each other (a lap
-  table reading 10.1 km/h while every plotted point sat below 10). Deriving
-  everything from one channel makes the invariants hold by construction: no
-  smoothed chart point above the raw maximum, the chart still reaches the raw
-  maximum, no FIT record faster than the session maximum, and live active totals
-  converge to finalized totals.
+- **Decision:** Chart points, time-weighted lap/session averages, maxima, and FIT
+  record speed use valid active `speed_instant` readings. Cumulative odometer
+  distance is a separate recorded channel and is
+  never capped or rewritten using speed. Chart smoothing is presentation-only,
+  preserves the raw maximum point, and cannot change aggregates.
+- **Rationale:** The recorded workout that motivated this change cannot satisfy
+  both `average speed = distance / active time` and its recorded instantaneous
+  averages/maximum: resume odometer jumps imply derived lap averages above the
+  recorded overall maximum. Keeping the two observations independent is the
+  simplest reproducible policy and avoids inventing undocumented corrections.
 - **Consequences:**
-  - "Max speed" means the fastest represented record window, not a sensor
-    instantaneous peak and not a smoothed chart peak.
-  - Missing odometer readings are bridged over their combined active duration.
-  - Centimetre allocation at a planned boundary can put a lap average a tiny
-    fraction above its raw record peak; only that encoded edge is normalized so
-    every reported `average <= maximum`.
+  - `lap distance / lap active time` can differ from reported average speed.
+  - A valid time-weighted average cannot exceed its raw maximum; constant speed
+    legitimately produces equality rather than a strictly lower average.
+  - If the recorded speed channel has no valid value, average and maximum stay
+    unavailable instead of falling back to odometer-derived speed.
+  - Missing odometer readings still bridge over their pending active intervals,
+    independently from speed.
+
+## D018 — Metric channels are fixed by metric
+
+- **Status:** Accepted
+- **Decision:** There is no global metric-source setting. Finalized speed uses
+  the instantaneous protocol field; finalized cadence and pull force use the
+  stroke-averaged protocol fields. The main-window cards and planned target
+  feedback consistently use averaged speed, pace, cadence, and pull force.
+  Estimated power always uses averaged cadence and force with the recorded
+  pull-length calibration. Heart rate and distance each have one source field.
+- **Rationale:** A global instant/averaged switch was misleading because speed
+  requires its instantaneous peak-preserving channel, while instantaneous
+  force and cadence make the calibrated power model substantially less
+  accurate. Explicit presentation and finalization policies keep each surface
+  internally consistent without a hidden processing preference.
+- **Consequences:** Every main-window sensor card and its secondary average/max
+  use averaged device fields. Summary, graph, and FIT speed continue to share
+  the instantaneous recorded channel. Changing app settings cannot reinterpret
+  a workout's metric channels.
 
 ## Branch history and handoff
 

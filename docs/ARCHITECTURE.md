@@ -165,12 +165,12 @@ workout.
 
 `app.workout_session.WorkoutSession` owns the live session:
 
-1. Establish an epoch anchor and monotonic anchor.
+1. Establish an epoch anchor, monotonic anchor, and `RecordingTimeline`.
 2. Reserve a timestamped directory under the year and open `workout.csv` in it.
 3. Save processing metadata and mark the workout recoverable.
 4. Connect/start the ergometer and optional HRM.
 5. For each ergometer record:
-   - derive an epoch timestamp from monotonic elapsed time;
+   - persist the canonical endpoint and non-overlapping represented duration;
    - attach the latest HR only while it is fresh;
    - append the full protocol row to CSV;
    - update the live free-workout segmenter;
@@ -195,13 +195,13 @@ using a semicolon delimiter. It does not decide which records count as activity.
 
 `app.read_csv.CsvReader`:
 
-- validates load-bearing columns;
-- tolerates missing optional and unknown future columns;
+- requires the exact unreleased v1 schema;
 - parses values defensively;
 - skips individually corrupt/truncated rows;
 - rejects a predominantly corrupt file;
 - preserves stationary and repeated valid rows;
-- selects instantaneous or averaged protocol fields;
+- projects fixed canonical protocol fields: instantaneous speed and
+  stroke-averaged cadence/pull force;
 - returns the small stdlib-only `app.table.Table` abstraction.
 
 The CSV remains the durable observation source even after FIT generation.
@@ -210,7 +210,7 @@ The CSV remains the durable observation source even after FIT generation.
 
 `app.segmentation` and `app.finalized_workout` have separate responsibilities:
 
-- `LiveSegmenter` provides debounced pause/resume and natural-lap presentation.
+- `LiveSegmenter` reflects every recorded activity transition immediately.
 - `resolve_segments()` determines exact active runs for final processing.
 - `finalize_workout()` creates the complete domain consumed by FIT and summary.
 
@@ -220,13 +220,13 @@ distance never infer timer state.
 
 A finalized workout contains:
 
-- original row timestamps;
+- a canonical represented interval and epoch endpoint for every row;
 - exact contiguous active segments;
 - active record indices;
 - FIT/summary lap groups;
 - chart break indices;
 - total active timer time;
-- first-active-start to last-active-stop elapsed time;
+- complete elapsed-zero to final-record session time;
 - cumulative distance at the last active record.
 - an explicit represented duration for every emitted record.
 
@@ -234,10 +234,10 @@ Activity runs and laps are frozen typed records. Finalization is a small
 orchestrator over pure phases for sample windows, active distance, planned/free
 lap construction, chart breaks, and conservation/rounding.
 
-Each active row's `sample_duration` represents the interval ending at its
-timestamp. The first segment start is shifted backward by its first represented
-window. Session timer time is the sum of valid active windows; chronological
-gaps remain part of elapsed time but not timer time.
+Each row represents `[session_elapsed__s - sample_duration__s,
+session_elapsed__s]`. `timestamp` is the same endpoint on the session epoch.
+Raw device timing is diagnostic only. Session timer time is the sum of active
+represented windows; inactive and uncovered time remains elapsed time.
 
 The planned lap totals must conserve the finalized session's active timer time
 and distance. Invalid or incomplete timelines fail processing instead of
@@ -245,10 +245,10 @@ silently changing workout type or omitting samples.
 
 ### Free workouts
 
-Exact runs own FIT timer events. Runs separated by only a brief inactive drop
-can remain one natural lap; threshold-length inactivity or a large timestamp gap
-starts another lap. Chart lines restart at meaningful pauses, not every brief
-flag fluctuation.
+Exact runs own FIT timer events, free laps, and chart lines. Every inactive
+record closes the current run; every following active record starts another.
+An uncovered interval also breaks the run. There is no presentation debounce
+or configurable gap threshold.
 
 ### Planned workouts
 
@@ -257,7 +257,8 @@ expansion work, and total steps are bounded. `ProgramRunner` consumes ergometer
 elapsed time and cumulative distance on each sensor sample. Open steps require a
 manual advance.
 
-`WorkoutSession` records observed step boundaries in `steps.json`.
+`WorkoutSession` records strict canonical session-elapsed step boundaries in
+`steps.json`; epoch boundary fields are not part of v1.
 Transition and final boundaries are persisted immediately; an open step is
 checkpointed at a bounded interval rather than fsyncing its sidecar for every
 sensor sample.
@@ -267,8 +268,8 @@ step lap. Planned-workout metadata requires a complete, valid sidecar; a missing
 or unusable timeline fails closed instead of silently changing the workout to
 free-workout grouping.
 
-Time steps are driven by the ergometer elapsed field rather than an independent
-periodic wall clock. A delayed sample can cross multiple boundaries:
+Time steps are driven by canonical session elapsed time rather than an
+independent periodic wall clock. A delayed sample can cross multiple boundaries:
 `ProgramRunner` preserves its overshoot and reports every exact transition.
 Finalization intersects each represented sample window with performed step
 intervals, so timer time, metrics, and distance are apportioned conservatively.
@@ -278,12 +279,12 @@ intervals, so timer time, metrics, and distance are apportioned conservatively.
 `app.workout_metrics.compute_finalized_metrics()` is the final FIT/summary
 aggregate boundary, using `app.stats.aggregate_metrics()` for each session/lap
 slice. HR, cadence, and estimated power use positive valid readings and
-sample-duration weights. `app.active_distance.ActiveDistanceAccumulator` owns
+active-overlap weights. `app.active_distance.ActiveDistanceAccumulator` owns
 active distance/time attribution for both finalization and the live dashboard.
-Speed is one story from that distance channel (`app.speed_series`, D017):
-average speed is distance divided by active timer time, while record and peak
-speed use active record distance divided by represented duration. FIT carries
-the raw canonical series; chart smoothing is presentation-only.
+Speed uses the independent recorded instantaneous channel (`app.speed_series`,
+D017): averages are weighted by active represented intervals and maxima are
+raw active peaks. FIT carries that unsmoothed series; chart smoothing is
+presentation-only and restores the raw maximum point.
 HR-zone time is accumulated over active segments only, with missing-HR time
 presented separately.
 

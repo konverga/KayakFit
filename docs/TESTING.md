@@ -32,13 +32,14 @@ handoff.
 | BLE parsing | `tests/test_ble_parsing.py` |
 | FIT timer-event ordering | `tests/test_fit_events.py` |
 | CSV parsing and corruption recovery | `tests/test_read_csv.py` |
+| Canonical capture timing and reconnects | `tests/test_recording_timeline.py` |
 | Durable CSV writes and filename collisions | `tests/test_write_csv.py` |
 | Activity detection and autopause | `tests/test_segmentation.py` |
 | Planned program parsing/execution | `tests/test_program.py` |
 | Planned-step laps and sample attribution | `tests/test_program_laps.py` |
 | Shared metric aggregation | `tests/test_stats.py` |
 | Summary timing, series, and HR zones | `tests/test_summary.py`, `tests/test_hr_zones.py` |
-| Live instant/averaged field policy | `tests/test_metrics_format.py` |
+| Averaged live-card metric policy | `tests/test_metrics_format.py` |
 | Encoded FIT/summary parity | `tests/test_pipeline.py` |
 | Recovery marker behavior | `tests/test_recovery.py` |
 | Worker outcomes, atomic state and strict configuration | `tests/test_reliability.py` |
@@ -68,6 +69,7 @@ deliberate subsystem boundary.
 Important workout invariants include:
 
 - HR-only prefixes and tails do not extend activity.
+- Initial/repeated zero-duration observations and reconnect gaps do not inflate active time.
 - Every emitted FIT record belongs to an active ergometer window.
 - Planned lap timer time does not exceed lap elapsed time.
 - Planned step attribution conserves active time and active distance when the
@@ -76,11 +78,10 @@ Important workout invariants include:
   decoding.
 - Every session/lap average is at most its corresponding maximum, and the
   session speed maximum is at least every lap speed maximum.
-- FIT speed records and peak speed use raw active distance / represented active
-  duration, never the sensor speed channel; chart smoothing is presentation-only
-  but preserves the visible raw maximum.
-- Session active time equals summed lap active time. Session elapsed time equals
-  summed lap elapsed time plus explicit following gaps.
+- FIT speed records, averages, and peaks use active instantaneous sensor values;
+  chart smoothing is presentation-only but preserves the visible raw maximum.
+- Session active time equals summed lap active time, and session active distance
+  equals summed lap active distance.
 - Split formatting preserves finalized centimetre and millisecond values rather
   than redistributing independently rounded units.
 - Inactive distance changes do not inflate FIT/session/chart totals.

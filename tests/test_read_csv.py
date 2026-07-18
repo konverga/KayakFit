@@ -53,6 +53,8 @@ def _row(i: int, speed: str = "3.20", distance: str | None = None) -> dict[str, 
     dist = distance if distance is not None else f"{i * 3.2:.2f}"
     return {
         "timestamp": 1_700_000_000_000 + i * 1000,
+        "session_elapsed__s": i,
+        "sample_duration__s": 1,
         "heart_rate__bpm": 120 + (i % 10),
         "kayakfirst_timestamp": 1_700_000_000_000 + i * 1000,
         "col_2": 0, "col_3": 0, "col_4": "0.00", "col_5": "0.00",
@@ -85,16 +87,17 @@ def test_parse_types_and_shape() -> None:
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "w.csv"
         _write(p, [_row(i) for i in range(1, 6)])
-        t = CsvReader(str(p), CONFIG).read_all("instant")
+        t = CsvReader(str(p), CONFIG).read_all()
         assert t.columns == [
-            "timestamp", "heart_rate", "cadence", "distance", "speed",
-            "speed_instant", "pull_force", "active", "sample_duration",
+            "timestamp", "session_elapsed", "sample_duration",
+            "device_elapsed", "device_window", "kayakfirst_timestamp",
+            "heart_rate", "cadence", "distance", "speed_instant",
+            "pull_force", "active",
         ]
         assert t.height == 5
         assert isinstance(t.get_column("timestamp")[0], int)
         assert isinstance(t.get_column("distance")[0], Decimal)
-        assert isinstance(t.get_column("speed")[0], Decimal)
-        assert t.get_column("speed_instant") == t.get_column("speed")
+        assert isinstance(t.get_column("speed_instant")[0], Decimal)
         print("  ok: typed columns (int timestamp, Decimal distance/speed)")
 
 
@@ -105,24 +108,29 @@ def test_unused_malformed_pace_does_not_discard_sensor_row() -> None:
         row["pace_200m__s"] = "(0, 0)"
         _write(p, [row])
 
-        table = CsvReader(str(p), CONFIG).read_all("averaged")
+        table = CsvReader(str(p), CONFIG).read_all()
 
         assert table.height == 1
         assert table.get_column("distance") == [Decimal("3.20")]
 
 
-def test_instantaneous_speed_is_retained_in_averaged_mode() -> None:
+def test_canonical_metric_channels_are_fixed() -> None:
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "w.csv"
         row = _row(1)
         row["speed__mps"] = "2.50"
         row["speed_instant__mps"] = "3.25"
+        row["cadence__spm"] = 60
+        row["cadence_instant__spm"] = 90
+        row["pull_force__n"] = 100
+        row["pull_force_instant__n"] = 200
         _write(p, [row])
 
-        table = CsvReader(str(p), CONFIG).read_all("averaged")
+        table = CsvReader(str(p), CONFIG).read_all()
 
-        assert table.get_column("speed") == [Decimal("2.50")]
         assert table.get_column("speed_instant") == [Decimal("3.25")]
+        assert table.get_column("cadence") == [60]
+        assert table.get_column("pull_force") == [100]
 
 
 def test_stationary_rows_are_preserved() -> None:
@@ -133,7 +141,7 @@ def test_stationary_rows_are_preserved() -> None:
         rows = [_row(i) for i in range(1, 4)]
         rows += [_row(i, speed="0.00", distance=f"{3 * 3.2:.2f}") for i in range(4, 6)]
         _write(p, rows)
-        t = CsvReader(str(p), CONFIG).read_all("instant")
+        t = CsvReader(str(p), CONFIG).read_all()
         assert t.height == 5, f"expected all 5 rows, got {t.height}"
         print("  ok: stationary rows preserved for pause detection")
 
@@ -146,11 +154,13 @@ def test_repeated_payload_rows_are_preserved() -> None:
         r1 = _row(1, distance="10.00")
         dup = dict(r1)
         dup["timestamp"] = r1["timestamp"] + 1000
+        dup["session_elapsed__s"] = 2
         dup["heart_rate__bpm"] = r1["heart_rate__bpm"] + 5
         r3 = _row(1, distance="20.00")  # different distance -> distinct row
         r3["timestamp"] = r1["timestamp"] + 2000
+        r3["session_elapsed__s"] = 3
         _write(p, [r1, dup, r3])
-        t = CsvReader(str(p), CONFIG).read_all("instant")
+        t = CsvReader(str(p), CONFIG).read_all()
         assert t.height == 3, f"expected all repeated samples, got {t.height}"
         assert t.get_column("timestamp")[0] == r1["timestamp"]
         print("  ok: repeated payload rows preserved")
@@ -161,7 +171,7 @@ def test_schema_mismatch_raises() -> None:
         p = Path(d) / "bad.csv"
         _write(p, [_row(i) for i in range(1, 4)], full_schema=False)
         try:
-            CsvReader(str(p), CONFIG).read_all("instant")
+            CsvReader(str(p), CONFIG).read_all()
             raised = False
         except CsvReadError:
             raised = True
@@ -177,7 +187,7 @@ def test_one_corrupt_cell_keeps_other_rows() -> None:
         rows[9]["distance__m"] = "abc"  # 10th data row -> line 11, decimal col
         _write(p, rows)
         with _capture_reader_logs() as recs:
-            t = CsvReader(str(p), CONFIG).read_all("instant")
+            t = CsvReader(str(p), CONFIG).read_all()
         assert t.height == 19, f"expected 19 surviving rows, got {t.height}"
         msgs = [r.getMessage() for r in recs]
         assert any("line 11" in m and "distance__m" in m for m in msgs), \
@@ -194,7 +204,7 @@ def test_mostly_corrupt_file_raises() -> None:
             rows[j]["distance__m"] = "xx"
         _write(p, rows)
         try:
-            CsvReader(str(p), CONFIG).read_all("instant")
+            CsvReader(str(p), CONFIG).read_all()
             raised, msg = False, ""
         except CsvReadError as e:
             raised, msg = True, str(e)
@@ -209,7 +219,7 @@ def test_missing_column_is_rejected() -> None:
         fields = [f for f in ALL_FIELDS if f != "active_paddling"]
         _write_cols(p, [_row(i) for i in range(1, 6)], fields)
         with pytest.raises(CsvReadError, match="active_paddling"):
-            CsvReader(str(p), CONFIG).read_all("instant")
+            CsvReader(str(p), CONFIG).read_all()
 
 
 def test_unknown_extra_column_is_rejected() -> None:
@@ -220,7 +230,7 @@ def test_unknown_extra_column_is_rejected() -> None:
             r["future_metric"] = 42
         _write_cols(p, rows, [*ALL_FIELDS, "future_metric"])
         with pytest.raises(CsvReadError, match="future_metric"):
-            CsvReader(str(p), CONFIG).read_all("instant")
+            CsvReader(str(p), CONFIG).read_all()
 
 
 def test_missing_required_column_raises() -> None:
@@ -230,7 +240,7 @@ def test_missing_required_column_raises() -> None:
         fields = [f for f in ALL_FIELDS if f != "distance__m"]
         _write_cols(p, [_row(i) for i in range(1, 6)], fields)
         try:
-            CsvReader(str(p), CONFIG).read_all("instant")
+            CsvReader(str(p), CONFIG).read_all()
             raised, msg = False, ""
         except CsvReadError as e:
             raised, msg = True, str(e)
@@ -250,7 +260,7 @@ def test_length_mismatch_row_still_skipped() -> None:
         lines[3] = ";".join(lines[3].split(";")[:-4])  # truncate 3rd data row
         p.write_text("\n".join(lines) + "\n", encoding="utf-8")
         with _capture_reader_logs() as recs:
-            t = CsvReader(str(p), CONFIG).read_all("instant")
+            t = CsvReader(str(p), CONFIG).read_all()
         assert t.height == 4, f"expected 4 rows after skipping truncated one, got {t.height}"
         assert any("field-count mismatch" in r.getMessage() for r in recs), \
             "truncated row skip should be logged"
@@ -263,7 +273,7 @@ def test_empty_file_raises() -> None:
         p = Path(d) / "empty.csv"
         p.write_text("", encoding="utf-8")
         try:
-            CsvReader(str(p), CONFIG).read_all("instant")
+            CsvReader(str(p), CONFIG).read_all()
             raised = False
         except CsvReadError:
             raised = True

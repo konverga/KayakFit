@@ -98,15 +98,13 @@ def zone_range(
     return (low, high)
 
 
-def format_pace(
-    data: dict[str, Any], distance_m: int, data_points: str = "instant"
-) -> str | None:
-    """Format pace for a competition distance using the selected field mode.
+def format_pace(data: dict[str, Any], distance_m: int) -> str | None:
+    """Format the ergometer's averaged pace for a competition distance.
 
     Returns an ``m:ss`` string, ``"—"`` when out of range, or None if the field
     is absent.
     """
-    field = _metric_field(f"pace_{int(distance_m)}m", data_points) + "__s"
+    field = f"pace_{int(distance_m)}m__s"
     value = data.get(field)
     if value is None:
         return None
@@ -117,37 +115,29 @@ def format_pace(
     return fmt_time(secs) if 0 < secs < 3600 else "—"
 
 
-def _metric_field(base: str, data_points: str) -> str:
-    """Return the protocol field selected by the processing mode."""
-    suffix = "_instant" if data_points == "instant" else ""
-    return f"{base}{suffix}"
-
-
 def compute_power(
-    data: dict[str, Any], data_points: str = "averaged", pull_length_m: Any = 0.623
+    data: dict[str, Any], pull_length_m: Any = 0.623
 ) -> int | None:
-    """Estimate power using the explicitly selected protocol field mode."""
-    force = _metric_field("pull_force", data_points) + "__n"
-    cadence = _metric_field("cadence", data_points) + "__spm"
-    return estimate_power(data.get(force), data.get(cadence), pull_length_m)
+    """Estimate power from the calibrated averaged force/cadence channels."""
+    return estimate_power(
+        data.get("pull_force__n"), data.get("cadence__spm"), pull_length_m
+    )
 
 
 def metric_value(
     key: str,
     data: dict[str, Any],
-    data_points: str = "instant",
     pull_length_m: Any = 0.623,
 ) -> float | None:
-    """Return one live tile value using the configured protocol-field mode."""
-    suffix = "_instant" if data_points == "instant" else ""
+    """Return one main-window value using averaged ergometer channels."""
     field_by_key = {
-        "speed": f"speed{suffix}__mps",
-        "stroke": f"cadence{suffix}__spm",
-        "pull": f"pull_force{suffix}__n",
+        "speed": "speed__mps",
+        "stroke": "cadence__spm",
+        "pull": "pull_force__n",
         "hr": "heart_rate__bpm",
     }
     if key == "power":
-        power = compute_power(data, data_points, pull_length_m)
+        power = compute_power(data, pull_length_m)
         return float(power) if power is not None else None
     field = field_by_key.get(key)
     if field is None or data.get(field) is None:
@@ -160,16 +150,16 @@ def metric_value(
 
 
 def format_metrics(
-    data: dict[str, Any], data_points: str = "instant", pull_length_m: Any = 0.623
+    data: dict[str, Any], pull_length_m: Any = 0.623
 ) -> dict[str, str]:
     """Map a raw per-second data dict to display strings keyed by tile id."""
     out: dict[str, str] = {}
-    if data.get("elapsed_time__s") is not None:
-        out["time"] = fmt_time(data["elapsed_time__s"])
+    if data.get("session_elapsed__s") is not None:
+        out["time"] = fmt_time(data["session_elapsed__s"])
     if data.get("distance__m") is not None:
         out["distance"] = f"{float(data['distance__m']):,.0f}"
     for key in ("speed", "stroke", "hr", "pull", "power"):
-        value = metric_value(key, data, data_points, pull_length_m)
+        value = metric_value(key, data, pull_length_m)
         if value is not None:
             out[key] = f"{value:.1f}" if key == "speed" else f"{round(value)}"
     return out
@@ -186,7 +176,6 @@ def target_value(
     data: dict[str, Any],
     max_hr: Any = 185,
     zones: list[int] | None = None,
-    data_points: str = "instant",
     pull_length_m: Any = 0.623,
 ) -> float | None:
     """Extract the current value for a target metric from a live data dict.
@@ -201,9 +190,7 @@ def target_value(
         zone = hr_zone(hr, max_hr, zones)
         return float(zone + 1) if zone >= 0 else None
     if metric in _PACE_DISTANCES:
-        pace_field = _metric_field(
-            f"pace_{_PACE_DISTANCES[metric]}m", data_points
-        ) + "__s"
+        pace_field = f"pace_{_PACE_DISTANCES[metric]}m__s"
         value = data.get(pace_field)
         try:
             secs = float(value) if value is not None else None
@@ -212,10 +199,10 @@ def target_value(
         # A zero/huge pace means "not moving"; treat as unavailable.
         return secs if secs is not None and 0 < secs < 3600 else None
     if metric == "power":
-        power = compute_power(data, data_points, pull_length_m)
+        power = compute_power(data, pull_length_m)
         return float(power) if power is not None else None
     if metric == "spm":
-        value = data.get(_metric_field("cadence", data_points) + "__spm")
+        value = data.get("cadence__spm")
         return float(value) if value is not None else None
     return None
 

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.summary import compute_summary
 from app.table import Table
 from gui.summary_window import (
+    _axis_bounds,
     _downsample_indices,
     _hr_zone_parts,
     _MultiChart,
@@ -26,8 +27,8 @@ from gui.summary_window import (
 )
 
 COLUMNS = [
-    "timestamp", "heart_rate", "cadence", "distance", "speed", "pull_force",
-    "active", "sample_duration",
+    "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
+    "speed_instant", "pull_force", "active", "sample_duration",
 ]
 T0 = 1_700_000_000_000  # arbitrary epoch ms
 
@@ -44,12 +45,14 @@ def _row(
     i, hr=None, cadence=60, distance=None, speed=2.5, pull_force=100,
     ts=None, active=1, sample_duration=1,
 ):
+    endpoint_s = (ts if ts is not None else i) + 1
     return {
-        "timestamp": T0 + (ts if ts is not None else i) * 1000,
+        "timestamp": T0 + endpoint_s * 1000,
+        "session_elapsed": endpoint_s,
         "heart_rate": hr,
         "cadence": cadence,
         "distance": distance if distance is not None else 2.5 * (i + 1),
-        "speed": speed,
+        "speed_instant": speed,
         "pull_force": pull_force,
         "active": active,
         "sample_duration": sample_duration,
@@ -92,6 +95,7 @@ def test_totals_and_series():
         == n
     )
     assert s.series_t[0] == 0.0 and s.series_t[-1] == float(n - 1)
+    assert s.series_time_bounds == (0.0, float(n))
     series_speed0 = s.series_speed[0]
     assert series_speed0 is not None
     assert abs(series_speed0 - 2.5) < 1e-6
@@ -99,9 +103,10 @@ def test_totals_and_series():
 
 
 def test_two_laps_from_gap():
-    """A >5s timestamp gap splits the workout into two laps."""
+    """An explicit inactive record separates two free-workout laps."""
     rows = [_row(i) for i in range(30)]
-    # Second effort resumes 60s later, distance keeps accumulating.
+    rows.append(_row(30, active=0, speed=0, distance=75.0))
+    # Second effort resumes later; the activity transition owns the split.
     rows += [
         _row(30 + i, ts=90 + i, distance=2.5 * (30 + i)) for i in range(30)
     ]
@@ -127,7 +132,7 @@ def test_two_laps_from_gap():
 
 
 def test_split_speed_uses_recorded_signal_after_distance_jump():
-    """A coarse odometer jump on resume cannot create an impossible split."""
+    """A coarse odometer jump does not rewrite recorded speed statistics."""
     rows = [
         _row(0, distance=3.0, speed=3.0),
         _row(1, distance=6.0, speed=3.0),
@@ -141,31 +146,20 @@ def test_split_speed_uses_recorded_signal_after_distance_jump():
     summary = compute_summary(Table(COLUMNS, rows))
 
     assert len(summary.laps) == 2
-    assert summary.laps[1].distance_m == 6.0
+    assert summary.laps[1].distance_m == 15.0
     assert summary.laps[1].avg_speed_mps == 3.0
-    assert summary.laps[1].avg_speed_mps == (
-        summary.laps[1].distance_m / summary.laps[1].duration_s
-    )
     assert summary.laps[1].avg_speed_mps <= max(
         speed for speed in summary.series_speed if speed is not None
     )
 
 
 def test_speed_line_never_exceeds_reported_max():
-    """The plotted speed line, the average and the reported peak are one
-    coherent story from the distance channel.
-
-    Six slow seconds (2 m each) then six fast seconds (4 m each) average
-    3.0 m/s with a distance-derived peak of 4.0 m/s. The ``speed`` sensor
-    column is a misleading constant that must not influence either number.
-    The reported ``max_speed`` is the raw canonical peak. Presentation
-    smoothing cannot create a plotted point above it.
-    """
+    """The plotted speed line and cards use the same recorded channel."""
     rows = [_row(i, distance=_cumulative_distance(i), speed=1.0) for i in range(12)]
     s = compute_summary(Table(COLUMNS, rows))
 
-    assert s.avg_speed_mps == 3.0
-    assert s.max_speed_mps == 4.0  # distance-derived peak, not the 1.0 sensor
+    assert s.avg_speed_mps == 1.0
+    assert s.max_speed_mps == 1.0
 
     line = [
         v
@@ -189,7 +183,7 @@ def _cumulative_distance(i: int) -> float:
 def test_overlapping_sample_windows_are_rejected():
     """Corrupt timing must not produce FIT timer time greater than elapsed time."""
     rows = [
-        _row(0, sample_duration=2),
+        _row(0, sample_duration=1),
         _row(1, sample_duration=2),
     ]
 
@@ -212,8 +206,15 @@ def test_chart_smoothing_can_preserve_authoritative_peak():
     assert max(v for v in line if v is not None) == 20.0
 
 
-def test_brief_active_signal_gaps_do_not_fragment_chart_or_laps():
-    """Exact timer runs remain active-only while short gaps share one lap."""
+def test_chart_axis_includes_authoritative_maximum():
+    _lo, hi = _axis_bounds(
+        [1.0, 2.0], floor=0.0, ceiling=5.0, authoritative_max=10.0
+    )
+
+    assert hi > 10.0
+
+
+def test_each_active_signal_gap_fragments_chart_and_laps():
     columns = COLUMNS
     actives = [1, 1, 1, 0, 0, 1, 1, 1]
     rows = []
@@ -235,9 +236,9 @@ def test_brief_active_signal_gaps_do_not_fragment_chart_or_laps():
         )
     summary = compute_summary(Table(columns, rows))
     assert summary.duration_s == 6.0
-    assert len(summary.laps) == 1
+    assert len(summary.laps) == 2
     assert len(summary.series_t) == 6
-    assert summary.series_breaks == [True, False, False, False, False, False]
+    assert summary.series_breaks == [True, False, False, True, False, False]
     assert summary.max_hr == 127
     print("test_brief_active_signal_gaps_do_not_fragment_chart_or_laps passed")
 

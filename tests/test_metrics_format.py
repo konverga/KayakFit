@@ -23,28 +23,25 @@ def _packet() -> dict[str, float]:
     }
 
 
-def test_live_tiles_and_previews_share_selected_fields() -> None:
+def test_live_metrics_use_fixed_canonical_fields() -> None:
     packet = _packet()
 
-    averaged = format_metrics(packet, "averaged")
-    instant = format_metrics(packet, "instant")
+    formatted = format_metrics(packet)
 
-    assert averaged["speed"] == "7.2"
-    assert instant["speed"] == "14.4"
-    assert float(averaged["power"]) == metric_value("power", packet, "averaged")
-    assert float(instant["power"]) == metric_value("power", packet, "instant")
-    assert averaged["stroke"] == "60" and instant["stroke"] == "90"
+    assert formatted["speed"] == "7.2"
+    assert formatted["stroke"] == "60"
+    assert formatted["pull"] == "100"
+    assert formatted["power"] == "62"
+    assert metric_value("speed", packet) == 7.2
 
 
-def test_pace_and_targets_use_selected_fields() -> None:
+def test_pace_and_targets_use_fixed_canonical_fields() -> None:
     packet = _packet()
 
-    assert format_pace(packet, 500, "averaged") == "04:10"
-    assert format_pace(packet, 500, "instant") == "02:05"
-    assert target_value("spm", packet, data_points="averaged") == 60.0
-    assert target_value("spm", packet, data_points="instant") == 90.0
-    assert target_value("pace_500", packet, data_points="averaged") == 250.0
-    assert target_value("pace_500", packet, data_points="instant") == 125.0
+    assert format_pace(packet, 500) == "04:10"
+    assert target_value("spm", packet) == 60.0
+    assert target_value("pace_500", packet) == 250.0
+    assert target_value("power", packet) == 62.0
 
 
 def test_finalized_split_formatting_preserves_recorded_precision() -> None:

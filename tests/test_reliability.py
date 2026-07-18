@@ -15,7 +15,7 @@ from app.atomic_json import write_atomic_json
 from app.ble_device import BleDevice
 from app.events import UiEvent
 from app.worker_result import WorkerResult
-from app.workout_session import _packet_timestamp_ms
+from app.recording_timeline import RecordingTimeline
 from gui.config_manager import ConfigError, ConfigManager
 from gui.worker_manager import WorkerManager
 
@@ -62,10 +62,6 @@ def test_config_validation_rejects_invalid_explicit_values() -> None:
     with tempfile.TemporaryDirectory() as tmp, patch.object(Path, "home", return_value=Path(tmp)):
         manager = ConfigManager()
         cfg = dict(manager.DEFAULTS)
-        cfg["data_points"] = "smooth"
-        with pytest.raises(ConfigError, match="data_points"):
-            manager.validate_config(cfg)
-        cfg = dict(manager.DEFAULTS)
         cfg["ble_connect_retries"] = 1.5
         with pytest.raises(ConfigError, match="whole number"):
             manager.validate_config(cfg)
@@ -92,47 +88,37 @@ def test_config_save_normalizes_platform_string_subclasses() -> None:
 def test_invalid_config_is_preserved_and_reported() -> None:
     with tempfile.TemporaryDirectory() as tmp, patch.object(Path, "home", return_value=Path(tmp)):
         manager = ConfigManager()
-        manager.config_file.write_text("data_points: [broken", encoding="utf-8")
+        manager.config_file.write_text("log_level: [broken", encoding="utf-8")
         cfg = manager.load_config()
-        assert cfg["data_points"] == "averaged"
+        assert cfg["log_level"] == "info"
         assert manager.config_warning is not None
         assert not manager.config_file.exists()
         assert len(list(manager.config_folder.glob("config.invalid-*.yml"))) == 1
 
 
 def test_queued_ergometer_packets_follow_source_time_without_overlapping() -> None:
-    first = _packet_timestamp_ms(
-        {"elapsed_time__s": 1, "window_size__s": 1},
-        epoch_anchor_ms=100_000,
-        monotonic_anchor=10.0,
-        now_monotonic=20.0,
-        last_timestamp_ms=None,
+    timeline = RecordingTimeline(epoch_start_ms=100_000, monotonic_start_s=10.0)
+    first = timeline.advance(
+        device_elapsed_s=1, device_window_s=1, receipt_monotonic_s=20.0
     )
-    delayed = _packet_timestamp_ms(
-        {"elapsed_time__s": 3, "window_size__s": 2},
-        epoch_anchor_ms=100_000,
-        monotonic_anchor=10.0,
-        now_monotonic=20.0,
-        last_timestamp_ms=first,
+    delayed = timeline.advance(
+        device_elapsed_s=3, device_window_s=2, receipt_monotonic_s=20.0
     )
-    stalled_counter = _packet_timestamp_ms(
-        {"elapsed_time__s": 3, "window_size__s": 1},
-        epoch_anchor_ms=100_000,
-        monotonic_anchor=10.0,
-        now_monotonic=20.0,
-        last_timestamp_ms=delayed,
+    stalled_counter = timeline.advance(
+        device_elapsed_s=3, device_window_s=1, receipt_monotonic_s=20.0
     )
 
-    assert (first, delayed, stalled_counter) == (101_000, 103_000, 104_000)
+    assert (first.timestamp_ms, delayed.timestamp_ms) == (101_000, 103_000)
+    assert stalled_counter.timestamp_ms == 110_000
+    assert stalled_counter.sample_duration_s == 1.0
+    assert stalled_counter.gap_before_s == 6.0
 
-    reset_after_reconnect = _packet_timestamp_ms(
-        {"elapsed_time__s": 1, "window_size__s": 1},
-        epoch_anchor_ms=100_000,
-        monotonic_anchor=10.0,
-        now_monotonic=120.0,
-        last_timestamp_ms=200_000,
+    reset_after_reconnect = timeline.advance(
+        device_elapsed_s=1, device_window_s=1, receipt_monotonic_s=120.0
     )
-    assert reset_after_reconnect == 210_000
+    assert reset_after_reconnect.timestamp_ms == 210_000
+    assert reset_after_reconnect.session_elapsed_s == 110.0
+    assert reset_after_reconnect.sample_duration_s == 1.0
 
 
 def test_runtime_config_can_validate_export_without_ergometer() -> None:

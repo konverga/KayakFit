@@ -160,6 +160,7 @@ def _axis_bounds(
     values: list[float | None],
     floor: float | None = None,
     ceiling: float | None = None,
+    authoritative_max: float | None = None,
     margin_frac: float = 0.08,
 ) -> tuple[float, float]:
     """A value-axis ``(lo, hi)`` that is robust to sparse outliers.
@@ -195,6 +196,8 @@ def _axis_bounds(
             lo = p_lo
     if ceiling is not None:
         hi = min(hi, ceiling)
+    if authoritative_max is not None and math.isfinite(authoritative_max):
+        hi = max(hi, authoritative_max)
     if floor is not None:
         lo = max(lo, floor)
     if hi - lo < 1e-9:
@@ -203,7 +206,9 @@ def _axis_bounds(
     lo_m, hi_m = lo - margin, hi + margin
     if floor is not None:  # keep the natural baseline (0 speed, 0 bpm) in view
         lo_m = max(lo_m, floor)
-    if ceiling is not None:  # never let headroom push the axis past a hard cap
+    if ceiling is not None and (
+        authoritative_max is None or authoritative_max <= ceiling
+    ):
         hi_m = min(hi_m, ceiling)
     return lo_m, hi_m
 
@@ -325,6 +330,7 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
         series: list[_ChartSeries],
         steps: Sequence[tuple[float, float, str, str | None]] | None = None,
         breaks: Sequence[bool] | None = None,
+        time_bounds: tuple[float, float] | None = None,
     ) -> None:
         super().__init__(master, corner_radius=10)
         self._xs_time = xs_time
@@ -337,6 +343,7 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
         self._series = [s for s in series if s.has_data]
         self._steps = list(steps) if steps is not None else []
         self._breaks = list(breaks) if breaks is not None else []
+        self._time_bounds = time_bounds
         self._visible: dict[str, Any] = {}
         self._downsample_cache: dict[tuple[str, str, int], list[int]] = {}
         self._resize_job: Any | None = None
@@ -463,6 +470,8 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
         # last record can legitimately have a missing reading, so xs[-1] is not
         # safe to use as the maximum.
         x_max = max((x for x in xs if x is not None), default=1.0)
+        if self._x_mode == "time" and self._time_bounds is not None:
+            x_max = max(x_max, self._time_bounds[1])
         x_max = max(x_max, 1.0)
 
         def px(t: float) -> float:
@@ -523,7 +532,13 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
             py0 = panels_top + k * (self._PANEL_H + self._PANEL_GAP)
             py1 = py0 + self._PANEL_H
 
-            lo, hi = _axis_bounds(s.ys, floor=s.floor, ceiling=s.ceiling)
+            authoritative_max = s.stats[1] if s.stats is not None else None
+            lo, hi = _axis_bounds(
+                s.ys,
+                floor=s.floor,
+                ceiling=s.ceiling,
+                authoritative_max=authoritative_max,
+            )
             panels.append((s, lo, hi, py0, py1))
             line = _theme(s.color)
 
@@ -885,9 +900,7 @@ def _load_summary(csv_path: str) -> WorkoutSummary:
     """Load and compute a summary without touching Tk."""
     metadata = load_workout_metadata(csv_path)
     config = load_workout_config(csv_path)
-    table = CsvReader(csv_path, config).read_all(
-        data_points=str(config.get("data_points", "instant"))
-    )
+    table = CsvReader(csv_path, config).read_all()
     zones = None
     if str(config.get("hr_zone_mode", "auto")).lower() == "manual":
         zones = list(config.get("hr_zones") or []) or None
@@ -1043,6 +1056,7 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
             ],
             steps=summary.series_steps,
             breaks=summary.series_breaks,
+            time_bounds=summary.series_time_bounds,
         ).pack(fill="x", padx=10, pady=(0, 8))
 
         if any(v is not None for v in summary.series_hr):
@@ -1062,7 +1076,7 @@ def open_summary_window(
         root: Parent window.
         csv_path: Path to the workout CSV file. ``None``/empty is a no-op (the
             summary button can be wired before a workout has been recorded).
-        config: App configuration (used for HR zone bounds and data-point mode).
+        config: Recorded configuration used for HR zones and power calibration.
     """
     if not csv_path:
         return

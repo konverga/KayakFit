@@ -13,6 +13,8 @@ _DECIMAL_COLUMNS = {
     "col_4",
     "col_5",
     "distance__m",
+    "session_elapsed__s",
+    "sample_duration__s",
     "speed__mps",
     "speed_instant__mps",
 }
@@ -21,6 +23,8 @@ _DECIMAL_COLUMNS = {
 # ("int" or "decimal"). Replaces the former Polars schema.
 CSV_COLUMNS: list[str] = [
     "timestamp",
+    "session_elapsed__s",
+    "sample_duration__s",
     "heart_rate__bpm",
     "kayakfirst_timestamp",
     "col_2",
@@ -82,10 +86,7 @@ FIELD_MAP: dict[int, str] = {
     23: "window_size__s",
 }
 
-ALL_FIELDS: list[str] = [
-    "timestamp",
-    "heart_rate__bpm",
-] + [FIELD_MAP[i] for i in sorted(FIELD_MAP.keys())]
+ALL_FIELDS: list[str] = list(CSV_COLUMNS)
 
 
 def get_field_name(index: int) -> str:

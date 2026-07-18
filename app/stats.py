@@ -1,10 +1,9 @@
 """Shared workout-metric aggregation.
 
 The single, correct definition of how a slice of workout samples becomes the
-averaged/peak numbers shown to the athlete and written into the FIT file. Both
-consumers -- ``app.summary.compute_summary`` (in-app summary screen) and
-``app.export_fit.FitExporter._calculate_stats`` (the FIT session/lap messages
-Strava reads) -- go through here so they can never silently disagree, the same
+averaged/peak numbers shown to the athlete and written into the FIT file.
+``app.workout_metrics.compute_finalized_metrics`` supplies both consumers, so
+they cannot silently disagree. This follows the same
 "one source of truth" discipline ``app.segmentation`` provides for lap
 boundaries.
 
@@ -24,11 +23,11 @@ Two rules matter and were previously implemented inconsistently:
    physiological zero; including it drags every average toward zero. (The FIT
    exporter used to skip only ``None``, so a run of 0-bpm dropouts deflated its
    averages relative to the summary screen.)
-2. **Average speed is distance-covered / elapsed-moving-time**, the physically
-   correct definition, NOT a mean of the noisy per-record reported speed
-   samples (which is skewed by sampling irregularity and ignores elapsed time).
-   Peak speed is the largest positive sample supplied by compatibility callers;
-   finalized workout metrics derive canonical record speed separately.
+2. **Average and maximum speed come from the recorded instantaneous speed
+   samples.** Average speed is weighted by each active represented interval;
+   maximum speed is the largest active sample. Cumulative distance remains an
+   independent recorded measurement and is never used to manufacture a speed
+   spike.
 
 This module lives apart from ``app.table`` (whose ``column_mean``/``column_max``
 are deliberately generic, None-skipping aggregates) and ``app.segmentation``
@@ -38,6 +37,7 @@ It returns plain floats/ints; each caller coerces to its own field types
 """
 
 from collections.abc import Mapping, Sequence
+from math import isfinite
 from typing import Any
 
 from .power import DEFAULT_PULL_LENGTH_M, estimate_power
@@ -45,23 +45,6 @@ from .power import DEFAULT_PULL_LENGTH_M, estimate_power
 # Fractions of max HR used to derive the five zone lower bounds when explicit
 # bpm boundaries are not configured. Index 0 is Z1 (recovery) ... 4 is Z5 (max).
 ZONE_FRACTIONS = (0.0, 0.60, 0.70, 0.80, 0.90)
-
-
-def cumulative_segment_distance(
-    distance: Sequence[Any], start_idx: int, end_idx: int
-) -> float | None:
-    """Return FIT-compatible distance covered by an inclusive segment.
-
-    Device distance is cumulative from workout start. A resumed segment owns
-    the advance since the record immediately before it; the first segment owns
-    the cumulative distance already present on its final record.
-    """
-    try:
-        end = float(distance[end_idx])
-        before = float(distance[start_idx - 1]) if start_idx > 0 else 0.0
-    except (IndexError, TypeError, ValueError):
-        return None
-    return end - before
 
 
 def zone_lower_bounds(
@@ -117,9 +100,18 @@ def time_in_hr_zones(
     zone_seconds = [0.0] * len(bounds)
     last = len(heart_rate) - 1
     for seg in segments:
-        start = max(int(seg["start_idx"]), 0)
-        end = min(int(seg["end_idx"]), last)
-        for i in range(start, end + 1):
+        raw_indices = seg.get("record_indices")
+        indices = (
+            [int(index) for index in raw_indices]
+            if raw_indices is not None
+            else range(
+                max(int(seg["start_idx"]), 0),
+                min(int(seg["end_idx"]), last) + 1,
+            )
+        )
+        for i in indices:
+            if i < 0 or i > last:
+                continue
             hr_raw = heart_rate[i]
             if hr_raw is None:
                 continue
@@ -207,8 +199,6 @@ def aggregate_metrics(
     cadence: Sequence[Any] | None = None,
     pull_force: Sequence[Any] | None = None,
     speed: Sequence[Any] | None = None,
-    distance_m: float | None = None,
-    duration_s: float | None = None,
     sample_weights: Sequence[Any] | None = None,
     pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
 ) -> dict[str, float | None]:
@@ -219,24 +209,19 @@ def aggregate_metrics(
             0 readings are treated as no signal).
         cadence: per-record cadence readings (same missing/zero handling).
         pull_force: per-record pull-force readings (same missing/zero handling).
-        speed: per-record readings used for peak speed by compatibility callers
-            (same missing/zero handling). Finalized workout metrics derive speed
-            from active record distance and duration instead.
-        distance_m: distance covered over the slice (metres) -- the numerator
-            for average speed.
-        duration_s: elapsed moving time over the slice (seconds) -- the
-            denominator for average speed.
+        speed: per-record instantaneous speed readings. Average speed is
+            time-weighted when ``sample_weights`` is supplied; maximum speed is
+            the largest valid reading.
         sample_weights: optional represented seconds per sensor sample. When
-            present, HR, cadence and power averages are time-weighted.
+            present, HR, cadence, power, and speed averages are time-weighted.
         pull_length_m: Effective handle pull length used for power estimation.
 
     Returns:
         Dict of plain floats (or None) with keys ``avg_heart_rate``,
         ``max_heart_rate``, ``avg_cadence``, ``max_cadence``, ``avg_power``,
         ``max_power``, ``avg_speed``, ``max_speed``. Averages/peaks are over
-        strictly-positive readings; ``avg_speed`` is ``distance_m / duration_s``
-        (None unless duration is positive and distance is non-negative). Callers
-        coerce types.
+        strictly-positive readings. Speed zero is retained as a real active
+        reading so a slow start is represented honestly. Callers coerce types.
     """
     result: dict[str, float | None] = {
         "avg_heart_rate": None,
@@ -275,16 +260,32 @@ def aggregate_metrics(
             )
         result["max_power"] = max(powers)
 
-    spd = _positive_floats(speed, 65.535)
-    if spd:
-        result["max_speed"] = max(spd)
-
-    if (
-        distance_m is not None
-        and duration_s is not None
-        and distance_m >= 0
-        and duration_s > 0
-    ):
-        result["avg_speed"] = distance_m / duration_s
+    speed_values: list[float] = []
+    if speed is not None:
+        for value in speed:
+            try:
+                reading = float(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= reading <= 65.535:
+                speed_values.append(reading)
+    if speed_values:
+        if sample_weights is None:
+            result["avg_speed"] = sum(speed_values) / len(speed_values)
+        else:
+            weighted_sum = 0.0
+            total_weight = 0.0
+            for value, weight in zip(speed or (), sample_weights, strict=False):
+                try:
+                    reading = float(value)
+                    seconds = float(weight)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= reading <= 65.535 and isfinite(seconds) and seconds > 0:
+                    weighted_sum += reading * seconds
+                    total_weight += seconds
+            if total_weight > 0:
+                result["avg_speed"] = weighted_sum / total_weight
+        result["max_speed"] = max(speed_values)
 
     return result

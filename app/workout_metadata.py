@@ -10,9 +10,6 @@ from .workout_paths import WorkoutPaths
 
 PROCESSING_CONFIG_KEYS = (
     "pull_length_m",
-    "data_points",
-    "autopause_stationary_threshold_records",
-    "autopause_gap_seconds",
     "max_hr",
     "hr_zone_mode",
     "hr_zones",
@@ -21,22 +18,16 @@ METADATA_VERSION = 1
 
 
 def _validate_processing_config(saved: dict[str, Any]) -> None:
-    """Validate every value that can change finalized workout output."""
+    """Validate the complete v1 processing-metadata schema."""
     try:
         pull_length = float(saved["pull_length_m"])
-        stationary = int(saved["autopause_stationary_threshold_records"])
-        gap = float(saved["autopause_gap_seconds"])
         max_hr = float(saved["max_hr"])
     except (TypeError, ValueError) as exc:
         raise ValueError("Workout is not v1: invalid numeric processing metadata") from exc
     if not 0.3 <= pull_length <= 1.2:
         raise ValueError("Workout is not v1: pull_length_m is out of range")
-    if isinstance(saved["autopause_stationary_threshold_records"], bool) or stationary < 1:
-        raise ValueError("Workout is not v1: invalid autopause stationary threshold")
-    if gap < 0 or max_hr <= 0:
-        raise ValueError("Workout is not v1: invalid gap or maximum heart rate")
-    if saved["data_points"] not in ("instant", "averaged"):
-        raise ValueError("Workout is not v1: invalid data_points mode")
+    if max_hr <= 0:
+        raise ValueError("Workout is not v1: invalid maximum heart rate")
     zone_mode = saved["hr_zone_mode"]
     zones = saved["hr_zones"]
     if zone_mode not in ("auto", "manual") or not isinstance(zones, list):
@@ -84,16 +75,25 @@ def load_workout_metadata(csv_path: str | Path) -> dict[str, Any]:
             payload = json.load(handle)
     except (OSError, ValueError) as exc:
         raise ValueError("Workout is not v1: valid metadata is required") from exc
-    if not isinstance(payload, dict) or payload.get("version") != METADATA_VERSION:
-        raise ValueError("Workout is not v1: unsupported metadata version")
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"version", "workout_mode", "processing_config"}
+        or payload.get("version") != METADATA_VERSION
+    ):
+        raise ValueError("Workout is not v1: invalid metadata schema or version")
     if payload.get("workout_mode") not in ("free", "planned"):
         raise ValueError("Workout is not v1: workout_mode must be free or planned")
     saved = payload.get("processing_config")
     if not isinstance(saved, dict):
         raise ValueError("Workout is not v1: processing_config is required")
-    missing = [key for key in PROCESSING_CONFIG_KEYS if key not in saved]
-    if missing:
-        raise ValueError(f"Workout is not v1: metadata missing {missing}")
+    expected_keys = set(PROCESSING_CONFIG_KEYS)
+    if set(saved) != expected_keys:
+        missing = sorted(expected_keys - set(saved))
+        extra = sorted(set(saved) - expected_keys)
+        raise ValueError(
+            f"Workout is not v1: processing_config schema mismatch "
+            f"(missing={missing}, extra={extra})"
+        )
     _validate_processing_config(saved)
     return payload
 
