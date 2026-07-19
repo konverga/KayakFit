@@ -23,12 +23,11 @@ from gui.summary_window import (
     _downsample_indices,
     _hr_zone_parts,
     _MultiChart,
-    _smooth,
 )
 
 COLUMNS = [
-    "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
-    "speed_instant", "pull_force", "active", "sample_duration",
+    "timestamp", "session_elapsed", "heart_rate", "cadence", "cadence_instant", "distance",
+    "speed_instant", "pull_force", "pull_force_instant", "active", "sample_duration",
 ]
 T0 = 1_700_000_000_000  # arbitrary epoch ms
 
@@ -51,9 +50,11 @@ def _row(
         "session_elapsed": endpoint_s,
         "heart_rate": hr,
         "cadence": cadence,
+        "cadence_instant": cadence,
         "distance": distance if distance is not None else 2.5 * (i + 1),
         "speed_instant": speed,
         "pull_force": pull_force,
+        "pull_force_instant": pull_force,
         "active": active,
         "sample_duration": sample_duration,
     }
@@ -94,7 +95,7 @@ def test_totals_and_series():
         == len(s.series_power)
         == n
     )
-    assert s.series_t[0] == 0.0 and s.series_t[-1] == float(n - 1)
+    assert s.series_t[0] == 1.0 and s.series_t[-1] == float(n)
     assert s.series_time_bounds == (0.0, float(n))
     series_speed0 = s.series_speed[0]
     assert series_speed0 is not None
@@ -153,19 +154,15 @@ def test_split_speed_uses_recorded_signal_after_distance_jump():
     )
 
 
-def test_speed_line_never_exceeds_reported_max():
-    """The plotted speed line and cards use the same recorded channel."""
+def test_raw_speed_line_never_exceeds_reported_max():
+    """The plotted raw speed points and cards use the same recorded channel."""
     rows = [_row(i, distance=_cumulative_distance(i), speed=1.0) for i in range(12)]
     s = compute_summary(Table(COLUMNS, rows))
 
     assert s.avg_speed_mps == 1.0
     assert s.max_speed_mps == 1.0
 
-    line = [
-        v
-        for v in _smooth(s.series_speed, s.series_breaks, preserve_max=True)
-        if v is not None
-    ]
+    line = [v for v in s.series_speed if v is not None]
     assert line, "expected a plotted speed line"
     assert all(v <= s.max_speed_mps + 1e-9 for v in line)
     assert max(line) == s.max_speed_mps
@@ -189,21 +186,6 @@ def test_overlapping_sample_windows_are_rejected():
 
     with pytest.raises(ValueError, match="sample windows overlap"):
         compute_summary(Table(COLUMNS, rows))
-
-
-def test_chart_smoothing_does_not_cross_segment_breaks():
-    """HR smoothing must not blend the last value before a pause with resume."""
-    values = [100.0, 100.0, 180.0, 180.0]
-    breaks = [True, False, True, False]
-    assert _smooth(values, breaks, window=5) == values
-    print("test_chart_smoothing_does_not_cross_segment_breaks passed")
-
-
-def test_chart_smoothing_can_preserve_authoritative_peak():
-    values = [10.0, 10.0, 20.0, 10.0, 10.0]
-    line = _smooth(values, window=5, preserve_max=True)
-
-    assert max(v for v in line if v is not None) == 20.0
 
 
 def test_chart_axis_includes_authoritative_maximum():
@@ -377,7 +359,7 @@ def test_series_distance_preserves_none():
             continue
         assert d is not None and abs(d - 2.5 * (i + 1)) < 1e-6
     # Other series are unaffected by the missing distance cells.
-    assert len(s.series_t) == 20 and s.series_t[5] == 5.0
+    assert len(s.series_t) == 20 and s.series_t[5] == 6.0
     assert all(v is not None for v in s.series_speed)
     print("test_series_distance_preserves_none passed")
 
@@ -411,7 +393,7 @@ def test_summary_excludes_inactive_heart_rate_tail():
     assert s.laps[0].duration_s == 20.0
     assert abs(s.laps[0].distance_m - frozen_dist) < 1e-6
     assert len(s.series_t) == 20
-    assert s.series_t[-1] == 19.0
+    assert s.series_t[-1] == 20.0
     assert s.duration_s == 20.0
 
 

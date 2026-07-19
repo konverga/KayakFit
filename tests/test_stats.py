@@ -14,8 +14,8 @@ from app.summary import compute_summary
 from app.table import Table
 
 COLUMNS = [
-    "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
-    "speed_instant", "pull_force", "active", "sample_duration",
+    "timestamp", "session_elapsed", "heart_rate", "cadence", "cadence_instant", "distance",
+    "speed_instant", "pull_force", "pull_force_instant", "active", "sample_duration",
 ]
 T0 = 1_700_000_000_000
 
@@ -33,7 +33,8 @@ def test_positive_filtering_and_avg_speed():
     m = aggregate_metrics(
         heart_rate=hr,
         cadence=cadence,
-        pull_force=pull_force,
+        power_cadence=cadence,
+        power_pull_force=pull_force,
         speed=speed,
     )
     # Zeros excluded: average is 150 / 60, not 75 / 30.
@@ -84,7 +85,8 @@ def test_sensor_averages_are_weighted_by_sample_window():
     metrics = aggregate_metrics(
         heart_rate=[100, 200],
         cadence=[50, 100],
-        pull_force=[100, 100],
+        power_cadence=[50, 100],
+        power_pull_force=[100, 100],
         sample_weights=[1, 3],
     )
     assert metrics["avg_heart_rate"] == 175.0
@@ -109,9 +111,11 @@ def _workout_with_dropouts() -> Table:
                 "session_elapsed": i + 1,
                 "heart_rate": 150 if good else 0,
                 "cadence": 60 if good else 0,
+                "cadence_instant": 60 if good else 0,
                 "distance": 2.5 * (i + 1),
                 "speed_instant": 2.5,
                 "pull_force": 100,
+                "pull_force_instant": 100,
                 "active": 1,
                 "sample_duration": 1,
             }
@@ -156,9 +160,11 @@ def test_avg_speed_is_the_recorded_sample_mean():
                 "session_elapsed": i + 1,
                 "heart_rate": 140,
                 "cadence": 70,
+                "cadence_instant": 70,
                 "distance": dist,
                 "speed_instant": float(i + 1),
                 "pull_force": 120,
+                "pull_force_instant": 120,
                 "active": 1,
                 "sample_duration": 1,
             }

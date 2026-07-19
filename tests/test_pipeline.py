@@ -93,9 +93,11 @@ def test_recorded_free_workout_golden_metrics() -> None:
                     "sample_duration": end_s - previous_end_s,
                     "heart_rate": 120,
                     "cadence": 60 if active else 0,
+                    "cadence_instant": 60 if active else 0,
                     "distance": distance_m,
                     "speed_instant": speed_mps,
                     "pull_force": 100 if active else 0,
+                    "pull_force_instant": 100 if active else 0,
                     "active": active,
                 }
             )
@@ -127,9 +129,11 @@ def test_canonical_fields_own_intervals() -> None:
             "session_elapsed": elapsed,
             "heart_rate": 120,
             "cadence": 60 if active else 0,
+            "cadence_instant": 60 if active else 0,
             "distance": distance,
             "speed_instant": 2.0 if active else 0.0,
             "pull_force": 100 if active else 0,
+            "pull_force_instant": 100 if active else 0,
             "active": active,
             "sample_duration": elapsed - (0 if index == 0 else (2, 5, 6)[index - 1]),
         }
@@ -143,7 +147,7 @@ def test_canonical_fields_own_intervals() -> None:
     assert summary.elapsed_time_s == 6.0
     assert summary.active_time_s == 4.0
     assert summary.pause_time_s == 2.0
-    assert summary.series_t == [2.0, 5.0]
+    assert summary.series_t == [5.0, 6.0]
     assert summary.series_time_bounds == (0.0, 6.0)
     assert summary.laps[0].start_s == 2.0
     assert summary.laps[0].elapsed_time_s == 4.0
@@ -251,6 +255,10 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         records = _fit_data_messages(fit_path, "record")
         sensor_records = [record for record in records if "heart_rate" in record]
         anchors = [record for record in records if "heart_rate" not in record]
+        active_rows = [row for row in rows if row["active_paddling"] == 1]
+        origin_ms = int(rows[0]["timestamp"]) - round(
+            float(rows[0]["session_elapsed__s"]) * 1000
+        )
 
         assert session["total_distance"] == summary.distance_m == 22.0
         assert session["total_timer_time"] == summary.duration_s == 5.0
@@ -272,6 +280,12 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         assert session["max_power"] == summary.max_power
         assert session["max_speed"] == summary.max_speed_mps
         assert abs(session["avg_speed"] - (summary.avg_speed_mps or 0.0)) < 0.001
+        assert [record["timestamp"] for record in sensor_records] == [
+            row["timestamp"] for row in active_rows
+        ]
+        assert summary.series_t == [
+            (int(row["timestamp"]) - origin_ms) / 1000.0 for row in active_rows
+        ]
         assert [record["distance"] for record in sensor_records] == summary.series_distance
         assert records[-1]["distance"] == session["total_distance"] == 22.0
         assert all("position_lat" in record for record in records)
@@ -319,7 +333,7 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         assert [lap.get("max_speed") for lap in laps] == [
             item.max_speed_mps for item in summary.laps
         ]
-        assert summary.series_t[0] == 0.0
+        assert summary.series_t[0] == 1.0
         assert summary.series_breaks == [True, False, False, True, False]
 
 
@@ -364,6 +378,46 @@ def test_speed_statistics_and_fit_records_use_instantaneous_sensor() -> None:
         assert all(lap["max_speed"] >= lap["avg_speed"] for lap in laps)
         assert session["max_speed"] >= session["avg_speed"]
         assert session["max_speed"] >= max(lap["max_speed"] for lap in laps)
+
+
+def test_instant_metrics_and_averaged_power_use_separate_channels() -> None:
+    """Summary/FIT use instant points except calibrated power inputs."""
+    with tempfile.TemporaryDirectory() as directory:
+        csv_path = Path(directory) / "metric-sources.csv"
+        rows = []
+        for i, instant_cadence in enumerate((70, 90, 110)):
+            row = _row(i)
+            row["cadence__spm"] = 60
+            row["cadence_instant__spm"] = instant_cadence
+            row["pull_force__n"] = 100
+            row["pull_force_instant__n"] = 200 + i * 50
+            rows.append(row)
+        lines = [";".join(ALL_FIELDS)]
+        lines.extend(
+            ";".join(str(row[field]) for field in ALL_FIELDS) for row in rows
+        )
+        csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        save_workout_metadata(csv_path, CONFIG, "free")
+
+        table = CsvReader(str(csv_path), CONFIG).read_all()
+        summary = compute_summary(table, config=CONFIG)
+        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        assert result["success"], result
+
+        records = _fit_data_messages(Path(result["file_path"]), "record")
+        sensor_records = [record for record in records if "cadence" in record]
+        session = _fit_data_messages(Path(result["file_path"]), "session")[0]
+
+        assert summary.series_spm == [70.0, 90.0, 110.0]
+        assert summary.series_pull == [200.0, 250.0, 300.0]
+        assert summary.avg_spm == 90.0
+        assert [record["cadence"] for record in sensor_records] == [70, 90, 110]
+        # 100 N * 0.623 m * 60 spm / 60 rounds to 62 W at every point.
+        assert summary.series_power == [62.0, 62.0, 62.0]
+        assert summary.avg_power == 62.0
+        assert [record["power"] for record in sensor_records] == [62, 62, 62]
+        assert session["avg_cadence"] == 90
+        assert session["avg_power"] == 62
 
 
 def test_resumed_distance_jump_is_preserved_consistently() -> None:
@@ -442,7 +496,7 @@ def test_active_signal_excludes_heart_rate_prefix_and_tail() -> None:
         assert summary.duration_s == session["total_timer_time"] == 3.0
         assert summary.elapsed_time_s == session["total_elapsed_time"] == 7.0
         assert summary.series_hr == [120.0, 125.0, 130.0]
-        assert summary.series_t[0] == 2.0
+        assert summary.series_t[0] == 3.0
         assert summary.series_breaks == [True, False, False]
         assert summary.max_hr == session["max_heart_rate"] == 130
         assert [record["heart_rate"] for record in sensor_records] == [120, 125, 130]
@@ -526,9 +580,11 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
             "session_elapsed": 4_320,
             "heart_rate": 140,
             "cadence": 70,
+            "cadence_instant": 70,
             "distance": 12_960.0,
             "speed_instant": 3.0,
             "pull_force": 180,
+            "pull_force_instant": 180,
             "active": 1,
             "sample_duration": 4_320,
         },
@@ -537,9 +593,11 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
             "session_elapsed": 4_321,
             "heart_rate": 140,
             "cadence": 70,
+            "cadence_instant": 70,
             "distance": 12_963.0,
             "speed_instant": 3.0,
             "pull_force": 180,
+            "pull_force_instant": 180,
             "active": 1,
             "sample_duration": 1,
         },
@@ -550,9 +608,11 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
             "session_elapsed",
             "heart_rate",
             "cadence",
+            "cadence_instant",
             "distance",
             "speed_instant",
             "pull_force",
+            "pull_force_instant",
             "active",
             "sample_duration",
         ],

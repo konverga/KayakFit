@@ -130,7 +130,7 @@ BLE packets -> CSV observation log -> CsvReader -> FinalizedWorkout
 - Canonical samples represent `[session_elapsed - sample_duration,
   session_elapsed]`; a zero-duration observation owns no activity time.
 - Planned samples may be split across exact performed-step boundaries.
-- Chart smoothing is presentation-only and must not redefine statistics.
+- Summary charts show raw source points and must not redefine statistics.
 
 Changes to this path require invariant tests and decoded-FIT parity coverage,
 not only unit tests of a helper.

@@ -136,13 +136,13 @@ def test_zero_duration_active_observation_only_updates_the_baseline() -> None:
 
 def test_live_and_finalized_resume_distance_use_the_same_raw_odometer():
     columns = [
-        "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
-        "speed", "speed_instant", "pull_force", "active", "sample_duration",
+        "timestamp", "session_elapsed", "heart_rate", "cadence", "cadence_instant", "distance",
+        "speed", "speed_instant", "pull_force", "pull_force_instant", "active", "sample_duration",
     ]
     rows = [
-        dict(zip(columns, [1000, 1, 120, 60, 3.0, 3.0, 3.0, 100, 1, 1], strict=True)),
-        dict(zip(columns, [2000, 2, 120, 0, 3.0, 0.0, 0.0, 0, 0, 1], strict=True)),
-        dict(zip(columns, [3000, 3, 120, 60, 13.0, 1.0, 3.0, 100, 1, 1], strict=True)),
+        dict(zip(columns, [1000, 1, 120, 60, 60, 3.0, 3.0, 3.0, 100, 100, 1, 1], strict=True)),
+        dict(zip(columns, [2000, 2, 120, 0, 0, 3.0, 0.0, 0.0, 0, 0, 0, 1], strict=True)),
+        dict(zip(columns, [3000, 3, 120, 60, 60, 13.0, 1.0, 3.0, 100, 100, 1, 1], strict=True)),
     ]
     tracker = LiveSpeedTracker()
     for row in rows:
@@ -161,10 +161,12 @@ def test_live_and_finalized_resume_distance_use_the_same_raw_odometer():
 
 def test_zero_distance_active_window_reports_zero_average_and_maximum():
     columns = [
-        "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
-        "speed_instant", "pull_force", "active", "sample_duration",
+        "timestamp", "session_elapsed", "heart_rate", "cadence", "cadence_instant", "distance",
+        "speed_instant", "pull_force", "pull_force_instant", "active", "sample_duration",
     ]
-    row = dict(zip(columns, [1000, 1, 120, 60, 0.0, 0.0, 100, 1, 1], strict=True))
+    row = dict(
+        zip(columns, [1000, 1, 120, 60, 60, 0.0, 0.0, 100, 100, 1, 1], strict=True)
+    )
     tracker = LiveSpeedTracker()
     tracker.update(distance_m=0.0, duration_s=1, active=1, reported_speed_mps=0.0)
     summary = compute_summary(Table(columns, [row]))

@@ -68,6 +68,7 @@ missing planned timelines are errors rather than free workouts.
 - stationary-tail trimming as a substitute for the activity flag;
 - optional or unknown CSV fields;
 - the `smooth` data-mode alias;
+- summary-chart moving-average rendering;
 - current-config substitution for missing workout metadata;
 - malformed-step filtering and planned-to-free fallback;
 - process-global power calibration;

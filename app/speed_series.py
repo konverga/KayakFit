@@ -1,63 +1,16 @@
 """Recorded workout speed shared by summary, FIT and the live UI.
 
-Instantaneous ergometer speed is the canonical speed channel. Chart smoothing
-remains presentation-only; it does not rewrite FIT measurements or statistics.
+Instantaneous ergometer speed is the canonical finalized speed channel.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from math import isfinite
+from typing import Any
 
 from .active_distance import ActiveDistanceAccumulator
 from .finalized_workout import FinalizedWorkout
 from .table import Table
-
-# Centered moving-average width used only for chart presentation.
-SPEED_SMOOTHING_WINDOW = 5
-
-
-def smooth(
-    values: Sequence[float | None],
-    breaks: Sequence[bool] | None = None,
-    window: int = SPEED_SMOOTHING_WINDOW,
-) -> list[float | None]:
-    """Centered moving average that never crosses missing data or a pause.
-
-    ``breaks[i]`` marks an index where a new segment starts (a lap boundary or a
-    meaningful pause); the averaging window is not allowed to span such a break,
-    so each segment is smoothed independently.
-    """
-    if window <= 1:
-        return list(values)
-    half = window // 2
-    out: list[float | None] = []
-    for i, v in enumerate(values):
-        if v is None:
-            out.append(None)
-            continue
-        left = max(0, i - half)
-        right = min(len(values), i + half + 1)
-        if breaks is not None:
-            for j in range(i, left - 1, -1):
-                if j < len(breaks) and breaks[j]:
-                    left = j
-                    break
-            for j in range(i + 1, right):
-                if j < len(breaks) and breaks[j]:
-                    right = j
-                    break
-        acc: list[float] = []
-        for j in range(left, right):
-            if values[j] is None:
-                if j <= i:  # gap before/at center: restart the window
-                    acc = []
-                else:  # gap after center: stop extending
-                    break
-            else:
-                acc.append(values[j])  # type: ignore[arg-type]
-        out.append(sum(acc) / len(acc) if acc else v)
-    return out
 
 
 def recorded_speed_mps(
@@ -103,10 +56,10 @@ class LiveSpeedTracker:
     def update(
         self,
         *,
-        distance_m: object,
-        duration_s: object,
-        active: object,
-        reported_speed_mps: object = None,
+        distance_m: Any,
+        duration_s: Any,
+        active: Any,
+        reported_speed_mps: Any = None,
     ) -> None:
         """Fold one live sample into active distance, time, average and maximum."""
         self._distance.update(

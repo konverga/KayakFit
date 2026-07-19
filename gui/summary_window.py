@@ -23,7 +23,6 @@ import customtkinter as ctk
 
 from app.read_csv import CsvReader
 from app.segmentation import load_program_steps
-from app.speed_series import SPEED_SMOOTHING_WINDOW, smooth
 from app.summary import WorkoutSummary, compute_summary
 from app.workout_metadata import load_workout_config, load_workout_metadata
 
@@ -71,40 +70,15 @@ _DETAIL_RENDER_DELAY_MS = 25
 _INITIAL_SPLIT_ROWS = 24
 _SPLIT_RENDER_BATCH_ROWS = 24
 _SPLIT_RENDER_DELAY_MS = 16
+_POWER_TOOLTIP = (
+    "Estimated power uses the ergometer's averaged pull force and stroke rate. "
+    "The cadence and pull-force charts show raw instantaneous sensor points."
+)
 
 
 def _theme(pair: tuple[str, str]) -> str:
     """Pick the light/dark variant of a color pair for the current mode."""
     return pair[1] if ctk.get_appearance_mode() == "Dark" else pair[0]
-
-
-def _smooth(
-    values: Sequence[float | None],
-    breaks: Sequence[bool] | None = None,
-    window: int = SPEED_SMOOTHING_WINDOW,
-    preserve_max: bool = False,
-) -> list[float | None]:
-    """Centered moving average that never crosses missing data or a pause.
-
-    Delegates to the shared :func:`app.speed_series.smooth`; reported
-    maxima remain raw record peaks. ``preserve_max`` keeps that peak visible and
-    hoverable instead of smoothing it below the value shown in the stat cards.
-    """
-    smoothed = smooth(values, breaks, window)
-    if not preserve_max:
-        return smoothed
-    present = [
-        (index, value)
-        for index, value in enumerate(values)
-        if value is not None and math.isfinite(value)
-    ]
-    if not present:
-        return smoothed
-    peak = max(value for _index, value in present)
-    for index, value in present:
-        if value == peak:
-            smoothed[index] = value
-    return smoothed
 
 
 def _kmh(values: list[float | None]) -> list[float | None]:
@@ -177,6 +151,8 @@ def _axis_bounds(
         values: The series values; ``None`` entries are ignored.
         floor: Lowest plausible value; the axis never starts below it.
         ceiling: Highest plausible value; the axis never ends above it.
+        authoritative_max: Raw aggregate maximum that must remain inside the
+            visible axis even when percentile outlier handling is active.
         margin_frac: Fraction of the range added as headroom top and bottom.
 
     Returns:
@@ -716,16 +692,77 @@ def _fmt_kmh(speed_mps: float | None) -> str:
     return f"{speed_mps * MPS_TO_KMH:,.1f}"
 
 
-def _stat_block(master: Any, label: str, value: str, sub: str = "") -> None:
+def _bind_tooltip(widget: Any, text: str) -> None:
+    """Show a compact explanation while the pointer rests on ``widget``."""
+    state: dict[str, tk.Toplevel | None] = {"window": None}
+
+    def hide(_event: Any = None) -> None:
+        window = state["window"]
+        if window is not None:
+            state["window"] = None
+            try:
+                if window.winfo_exists():
+                    window.destroy()
+            except tk.TclError:
+                pass
+
+    def show(_event: Any = None) -> None:
+        if state["window"] is not None or not widget.winfo_exists():
+            return
+        window = tk.Toplevel(widget)
+        window.wm_overrideredirect(True)
+        bg = "#2b2b2b" if ctk.get_appearance_mode() == "Dark" else "#fff8dc"
+        fg = "#f2f2f2" if ctk.get_appearance_mode() == "Dark" else "#1a1a1a"
+        tk.Label(
+            window,
+            text=text,
+            justify="left",
+            wraplength=320,
+            background=bg,
+            foreground=fg,
+            relief="solid",
+            borderwidth=1,
+            padx=7,
+            pady=5,
+        ).pack()
+        window.update_idletasks()
+        x = min(
+            widget.winfo_rootx(),
+            max(widget.winfo_screenwidth() - window.winfo_reqwidth() - 8, 0),
+        )
+        y = min(
+            widget.winfo_rooty() + widget.winfo_height() + 4,
+            max(widget.winfo_screenheight() - window.winfo_reqheight() - 8, 0),
+        )
+        window.wm_geometry(f"+{x}+{y}")
+        state["window"] = window
+
+    widget.bind("<Enter>", show, add="+")
+    widget.bind("<Leave>", hide, add="+")
+    widget.bind("<Destroy>", hide, add="+")
+
+
+def _stat_block(
+    master: Any,
+    label: str,
+    value: str,
+    sub: str = "",
+    tooltip: str | None = None,
+) -> None:
     box = ctk.CTkFrame(master, corner_radius=10)
     box.pack(side="left", expand=True, fill="both", padx=4)
     ctk.CTkLabel(
         box, text=value, font=ctk.CTkFont(size=20, weight="bold")
     ).pack(anchor="w", padx=12, pady=(10, 0))
-    subtext = f"{label}  ·  {sub}" if sub else label
-    ctk.CTkLabel(
+    visible_label = f"{label}  ⓘ" if tooltip else label
+    subtext = f"{visible_label}  ·  {sub}" if sub else visible_label
+    subtitle = ctk.CTkLabel(
         box, text=subtext, text_color=_TEXT, font=ctk.CTkFont(size=12)
-    ).pack(anchor="w", padx=12, pady=(0, 10))
+    )
+    subtitle.pack(anchor="w", padx=12, pady=(0, 10))
+    if tooltip:
+        subtitle.configure(cursor="question_arrow")
+        _bind_tooltip(subtitle, tooltip)
 
 
 def _hr_zone_parts(
@@ -816,7 +853,15 @@ def _build_splits_table(master: Any, summary: WorkoutSummary) -> None:
     headers.extend(["Start", "Elapsed", "Active"])
     if show_gap:
         headers.append("Gap after")
-    headers.extend(["Distance", "Speed km/h", "Avg HR", "Est. W", "SPM"])
+    headers.extend(
+        [
+            "Distance",
+            "Avg sensor\nspeed (km/h)",
+            "Avg HR",
+            "Avg est.\nW",
+            "Avg SPM",
+        ]
+    )
     left_cols = 2 if show_step else 1  # left-aligned leading columns
     header_font = ctk.CTkFont(size=12, weight="bold")
     cell_font = ctk.CTkFont(size=12)
@@ -950,7 +995,7 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
         f" · pause {fmt_time_precise(summary.pause_time_s)}",
     )
     _stat_block(
-        stats, "Avg speed", _fmt_kmh(summary.avg_speed_mps),
+        stats, "Avg sensor speed", _fmt_kmh(summary.avg_speed_mps),
         f"km/h · max {_fmt_kmh(summary.max_speed_mps)}",
     )
     _stat_block(
@@ -959,7 +1004,8 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
     )
     _stat_block(
         stats, "Avg est. power", _fmt_opt(summary.avg_power),
-        f"max (1 s) {_fmt_opt(float(summary.max_power) if summary.max_power else None)}",
+        f"max sample {_fmt_opt(float(summary.max_power) if summary.max_power else None)}",
+        tooltip=_POWER_TOOLTIP,
     )
     _stat_block(
         stats,
@@ -991,12 +1037,8 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
             summary.series_distance,
             [
                 _ChartSeries(
-                    "speed", "Speed", "km/h",
-                    _smooth(
-                        _kmh(summary.series_speed),
-                        summary.series_breaks,
-                        preserve_max=True,
-                    ),
+                    "speed", "Sensor speed", "km/h",
+                    _kmh(summary.series_speed),
                     _SPEED, fmt1, floor=0.0, ceiling=25.0,
                     stats=(
                         summary.avg_speed_mps * MPS_TO_KMH
@@ -1007,11 +1049,7 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "power", "Est. power", "W",
-                    _smooth(
-                        summary.series_power,
-                        summary.series_breaks,
-                        preserve_max=True,
-                    ),
+                    summary.series_power,
                     _POWER, fmt0, floor=0.0,
                     stats=(
                         summary.avg_power,
@@ -1020,11 +1058,7 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "hr", "HR", "bpm",
-                    _smooth(
-                        summary.series_hr,
-                        summary.series_breaks,
-                        preserve_max=True,
-                    ), _HR, fmt0,
+                    summary.series_hr, _HR, fmt0,
                     floor=0.0, ceiling=250.0,
                     stats=(
                         summary.avg_hr,
@@ -1033,11 +1067,7 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "spm", "Cadence", "spm",
-                    _smooth(
-                        summary.series_spm,
-                        summary.series_breaks,
-                        preserve_max=True,
-                    ), _CADENCE,
+                    summary.series_spm, _CADENCE,
                     fmt0, default_on=False, floor=0.0,
                     stats=(
                         summary.avg_spm,
@@ -1046,11 +1076,7 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
                 ),
                 _ChartSeries(
                     "pull", "Pull", "N",
-                    _smooth(
-                        summary.series_pull,
-                        summary.series_breaks,
-                        preserve_max=True,
-                    ), _PULL,
+                    summary.series_pull, _PULL,
                     fmt0, default_on=False, floor=0.0,
                 ),
             ],

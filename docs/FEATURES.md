@@ -21,7 +21,7 @@ not describe aspirational functionality. Verification labels mean:
 | Device connection tests | `gui/device_scanner.test_connection()` | Partial: tests only the BLE link, not the expected service/protocol |
 | Per-workout person and boat weights | main toolbar → workout worker → ergometer handshake | Implemented |
 | Five-slot ergometer display configuration | `ConfigManager.DISPLAY_MAP`, settings, handshake | Implemented |
-| Fixed reproducible metric policy | `CsvReader.read_all()`, `gui.metrics_format` | Tested; main-window sensor cards use averaged fields, while graph/summary/FIT speed uses the recorded instantaneous field (D017, D018) |
+| Fixed reproducible metric policy | `CsvReader.read_all()`, `gui.metrics_format` | Tested; main-window sensor cards use averaged fields, while graph/summary/FIT use instantaneous sensor points except for averaged-input power (D017, D018) |
 | Automatic/manual HR zones | `app/stats.py`, settings, device-status UI | Tested |
 | Logging level and interval | settings and `WorkoutSession` | Implemented |
 | Sound cues and target grace period | settings, program panel | Implemented |
@@ -163,17 +163,20 @@ The summary provides:
 - Average/maximum speed, HR, and estimated power.
 - Average cadence.
 - Selectable speed, power, HR, cadence, and pull-force charts.
-- Time or cumulative-distance x axis, smoothing, hover values, and pause/step
+- Raw chart points and hover readouts, plus a power tooltip explaining its
+  averaged cadence/force inputs.
+- Time or cumulative-distance x axis, raw-point hover values, and pause/step
   visualization. In time mode, planned phases use one compact strip above the
   metrics; short steps remain visible without repeated or overlapping labels.
 - Time in HR zones.
 - Free-workout laps or planned-step splits.
 
 The summary headline and split calculations use the same `FinalizedWorkout` and
-immutable finalized metric result as FIT generation. Speed averages are
-represented-time-weighted active instantaneous readings; peaks and FIT record
-speeds use that same raw channel (`app.speed_series`, D017). Chart smoothing is
-presentation-only, restores the raw maximum point, and includes it in the axis.
+immutable finalized metric result as FIT generation. Speed and cadence averages
+are represented-time-weighted active instantaneous readings; peaks and FIT
+records use those same raw channels. The pull-force chart is instantaneous;
+power alone is derived from averaged cadence and force (`app.speed_series`,
+D017/D018). Charts and hover readouts show raw recorded points.
 Every session/lap average is bounded by its maximum, and splits preserve
 finalized centimetre/millisecond values rather than redistributing rounded
 units. Decoded-FIT regression tests compare encoded fields with

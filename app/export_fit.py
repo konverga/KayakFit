@@ -327,11 +327,14 @@ class FitExporter:
         timestamps_ms = finalized.timestamps_ms
 
         # Materialize columns to Python lists once for fast positional access.
+        # FIT cadence retains the instantaneous samples; estimated power alone
+        # uses the calibrated stroke-averaged cadence/force pair.
         heart_rate_col = workout_df.get_column_or_none("heart_rate")
-        cadence_col = workout_df.get_column_or_none("cadence")
-        pull_force_col = workout_df.get_column_or_none("pull_force")
-        # FIT record speed is the same instantaneous recorded channel used by
-        # the summary and chart. Smoothing never rewrites FIT data.
+        cadence_col = workout_df.get_column_or_none("cadence_instant")
+        power_cadence_col = workout_df.get_column_or_none("cadence")
+        power_pull_force_col = workout_df.get_column_or_none("pull_force")
+        # FIT record speed is the same raw instantaneous channel used by the
+        # summary and chart.
         speed_by_index = recorded_speed_mps(workout_df, finalized)
 
         # The shared finalizer supplies the exact same activity segments used by
@@ -384,10 +387,10 @@ class FitExporter:
             if record_speed is not None and 0 <= record_speed <= 65.535:
                 record.speed = record_speed
 
-            if pull_force_col is not None and cadence_col is not None:
+            if power_pull_force_col is not None and power_cadence_col is not None:
                 power = estimate_power(
-                    pull_force_col[i],
-                    cadence_col[i],
+                    power_pull_force_col[i],
+                    power_cadence_col[i],
                     normalize_pull_length(self.config.get("pull_length_m")),
                 )
                 if power is not None and 0 < power <= 65535:

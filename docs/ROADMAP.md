@@ -155,20 +155,21 @@ derived artifacts are removed before the canonical CSV.
   workout, coordinate completion/cancellation, and delete every owned artifact
   after confirmation.
 
-### P0 — Stop calculating chart statistics from smoothed points
+### P0 — Keep chart statistics authoritative
 
-**Status: Completed 2026-07-13.** Smoothing is rendering-only; legends and
-average lines consume `WorkoutSummary` aggregates.
+**Status: Completed 2026-07-13; raw charts adopted 2026-07-19.** Legends and
+average lines consume `WorkoutSummary` aggregates, and charts now show raw
+recorded points.
 
 - **Location:** `gui/summary_window.py::_ChartSeries`
-- **Root cause:** The chart legend calculates an unweighted mean and maximum
-  after smoothing. It bypasses `WorkoutSummary` and `aggregate_metrics()`.
-- **Impact:** Smoothing lowers displayed peaks; irregular sample windows change
+- **Root cause:** The chart legend previously calculated an unweighted mean and
+  maximum from rendered points. It bypassed `WorkoutSummary` and
+  `aggregate_metrics()`.
+- **Impact:** Display processing lowered peaks; irregular sample windows changed
   displayed averages; speed no longer uses distance divided by active time.
   The summary window can therefore contradict its own headline and the FIT.
-- **Recommendation:** Pass authoritative aggregate values into chart series.
-  Treat smoothing as rendering-only and never derive reported statistics from
-  display points.
+- **Resolution:** Pass authoritative aggregate values into chart series and show
+  raw source points rather than deriving reported statistics from display data.
 
 ### P0 — Preserve planned-workout overshoot and exact boundaries
 
@@ -314,8 +315,8 @@ and packet-processing times; epoch time is used only for recorded timestamps.
 ### P1 — Make live and final metric policies explicit
 
 **Status: Completed 2026-07-18.** Main-window cards and planned targets use
-averaged device fields consistently. Summary, graph, and FIT processing share
-the finalized instantaneous-speed policy (D018).
+averaged device fields consistently. Summary, graph, and FIT processing use
+instantaneous sensor points except for calibrated averaged-input power (D018).
 
 - **Location:** `gui/metrics_format.py::compute_power`,
   `gui/recording_lifecycle.py::_raw_metric`
@@ -324,8 +325,8 @@ the finalized instantaneous-speed policy (D018).
 - **Impact:** A card could display one channel while its secondary statistics
   accumulated another.
 - **Resolution:** Each live card and target uses averaged fields; each card's
-  secondary statistics use its displayed field. Finalized consumers use their
-  separate shared policy.
+  secondary statistics use its displayed field. Finalized consumers use instant
+  points for sensor metrics and averaged cadence/force only for power.
 
 ### P1 — Reserve unique recording filenames atomically
 
@@ -365,8 +366,8 @@ resize redraws are debounced. Full-resolution data still owns statistics,
 hover values, and FIT output.
 
 - **Location:** `gui/summary_window.py::open_summary_window`, `_MultiChart`
-- **Root cause:** CSV reading, processing, smoothing, and Canvas point creation
-  happen synchronously on the GUI thread at full resolution.
+- **Root cause:** CSV reading, processing, and Canvas point creation formerly
+  happened synchronously on the GUI thread at full resolution.
 - **Impact:** Long or external workout files can freeze the UI and draw far more
   points than the display has pixels.
 - **Recommendation:** Use a worker/progress state and display-only min/max or

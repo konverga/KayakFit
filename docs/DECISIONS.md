@@ -55,7 +55,8 @@ does not imply that every current code path satisfies it perfectly.
   session/lap aggregate set consumed verbatim by FIT and summary;
   `app.stats.aggregate_metrics()` defines each slice's arithmetic.
 - **Rules:**
-  - HR, cadence, and estimated power average only valid positive readings.
+  - HR, instantaneous cadence, and estimated power average only valid positive
+    readings.
   - These averages use canonical represented sample duration.
   - Average speed is the represented-time-weighted mean of valid active
     `speed_instant` readings (see D017).
@@ -246,11 +247,10 @@ does not imply that every current code path satisfies it perfectly.
 ## D017 — Recorded instantaneous speed is the canonical speed channel
 
 - **Status:** Accepted
-- **Decision:** Chart points, time-weighted lap/session averages, maxima, and FIT
-  record speed use valid active `speed_instant` readings. Cumulative odometer
-  distance is a separate recorded channel and is
-  never capped or rewritten using speed. Chart smoothing is presentation-only,
-  preserves the raw maximum point, and cannot change aggregates.
+- **Decision:** Raw chart points, time-weighted lap/session averages, maxima, and
+  FIT record speed use valid active `speed_instant` readings. Cumulative
+  odometer distance is a separate recorded channel and is never capped or
+  rewritten using speed.
 - **Rationale:** The recorded workout that motivated this change cannot satisfy
   both `average speed = distance / active time` and its recorded instantaneous
   averages/maximum: resume odometer jumps imply derived lap averages above the
@@ -268,21 +268,22 @@ does not imply that every current code path satisfies it perfectly.
 ## D018 — Metric channels are fixed by metric
 
 - **Status:** Accepted
-- **Decision:** There is no global metric-source setting. Finalized speed uses
-  the instantaneous protocol field; finalized cadence and pull force use the
-  stroke-averaged protocol fields. The main-window cards and planned target
-  feedback consistently use averaged speed, pace, cadence, and pull force.
-  Estimated power always uses averaged cadence and force with the recorded
-  pull-length calibration. Heart rate and distance each have one source field.
-- **Rationale:** A global instant/averaged switch was misleading because speed
-  requires its instantaneous peak-preserving channel, while instantaneous
-  force and cadence make the calibrated power model substantially less
-  accurate. Explicit presentation and finalization policies keep each surface
-  internally consistent without a hidden processing preference.
+- **Decision:** There is no global metric-source setting. Summary and FIT use
+  instantaneous protocol points for speed and cadence, and the summary uses
+  instantaneous pull force. The main-window cards and planned target feedback
+  consistently use averaged speed, pace, cadence, and pull force. Estimated
+  power is the sole finalized exception: it always uses averaged cadence and
+  force with the recorded pull-length calibration. Heart rate and distance each
+  have one source field.
+- **Rationale:** Workout review and export retain the recorded instantaneous
+  sensor points. Power keeps its calibrated averaged inputs because
+  instantaneous force and cadence make that model substantially less accurate.
+  Explicit presentation and finalization policies keep each surface internally
+  consistent without a hidden processing preference.
 - **Consequences:** Every main-window sensor card and its secondary average/max
-  use averaged device fields. Summary, graph, and FIT speed continue to share
-  the instantaneous recorded channel. Changing app settings cannot reinterpret
-  a workout's metric channels.
+  use averaged device fields. Summary graphs, aggregates, and FIT records use
+  instantaneous sensor channels except for averaged-input power. Changing app
+  settings cannot reinterpret a workout's metric channels.
 
 ## Branch history and handoff
 

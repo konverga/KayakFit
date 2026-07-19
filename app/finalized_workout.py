@@ -89,7 +89,7 @@ class FinalizedWorkout:
     segments: tuple[ActivitySegment, ...]
     # Presentation/FIT lap groups. A lap can contain multiple active runs.
     laps: tuple[FinalizedLap, ...]
-    # Row indices where chart lines and smoothing restart (every active run).
+    # Row indices where chart lines restart (every active run).
     chart_break_indices: tuple[int, ...]
     moving_indices: tuple[int, ...]
     # Active-only cumulative distance written to each FIT record. Missing raw

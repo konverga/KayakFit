@@ -107,8 +107,8 @@ class WorkoutSummary:
     series_pull: list[float | None] = field(default_factory=list)  # N
     series_distance: list[float | None] = field(default_factory=list)  # m
     # True on the first record of each finalized lap or meaningful pause. The
-    # chart uses these boundaries to break lines and smoothing without
-    # inventing non-FIT records solely as visual sentinels.
+    # chart uses these boundaries to break lines without inventing non-FIT
+    # records solely as visual sentinels.
     series_breaks: list[bool] = field(default_factory=list)
     # Planned step bands on the chart's canonical session-elapsed time axis.
     # seconds, label and step kind. Empty for free workouts.
@@ -185,8 +185,9 @@ def compute_summary(
     """Compute a full workout summary from a workout Table.
 
     Args:
-        table: Output of ``CsvReader.read_all`` (columns: timestamp,
-            heart_rate, cadence, distance, speed_instant, pull_force).
+        table: Output of ``CsvReader.read_all`` (including timestamp, heart
+            rate, averaged/instant cadence and pull force, distance, and
+            instantaneous speed).
         max_hr: Max heart rate used to derive zone bounds (when ``zones`` is None).
         zones: Optional five ascending manual zone lower bounds (bpm).
         program_steps: Optional recorded program step timeline (the
@@ -212,13 +213,16 @@ def compute_summary(
         else DEFAULT_PULL_LENGTH_M
     )
     hrs = [to_float(v) for v in table.get_column("heart_rate")]
-    cadences = [to_float(v) for v in table.get_column("cadence")]
-    forces = [to_float(v) for v in table.get_column("pull_force")]
+    power_cadences = [to_float(v) for v in table.get_column("cadence")]
+    cadences = [to_float(v) for v in table.get_column("cadence_instant")]
+    power_forces = [to_float(v) for v in table.get_column("pull_force")]
+    forces = [to_float(v) for v in table.get_column("pull_force_instant")]
 
     # ---- chart series ------------------------------------------------------
-    # The chart, lap/session aggregates and FIT records use the same recorded
-    # instantaneous-speed channel. Smoothing remains presentation-only and the
-    # raw maximum point is restored by the chart renderer.
+    # Charts, lap/session aggregates and FIT records retain instantaneous
+    # sensor points. Power is the calibrated exception: each point is derived
+    # from stroke-averaged cadence and pull force. The renderer displays these
+    # raw points without applying a moving average.
     series_speed_by_index = recorded_speed_mps(table, finalized)
     series_speed = [series_speed_by_index.get(i) for i in range(table.height)]
     series_hr = [h if h is not None and h > 0 else None for h in hrs]
@@ -226,7 +230,7 @@ def compute_summary(
         (lambda p: float(p) if p is not None and p > 0 else None)(
             estimate_power(f, c, pull_length_m)
         )
-        for f, c in zip(forces, cadences, strict=False)
+        for f, c in zip(power_forces, power_cadences, strict=False)
     ]
     series_spm = [c if c is not None and c > 0 else None for c in cadences]
     series_pull = [f if f is not None and f > 0 else None for f in forces]
@@ -331,10 +335,11 @@ def compute_summary(
         ),
         zone_seconds=zone_seconds,
         laps=laps,
-        # Each value represents the interval beginning at this x coordinate.
-        # The explicit chart bounds retain the complete elapsed tail.
+        # Place each value at the exact CSV/FIT sample endpoint so a hover time
+        # maps one-to-one to the exported sensor record. Explicit bounds retain
+        # the complete elapsed timeline around those points.
         series_t=[
-            (finalized.record_windows_ms[i][0] - chart_start_ms) / 1000.0
+            (finalized.timestamps_ms[i] - chart_start_ms) / 1000.0
             for i in moving_indices
         ],
         series_speed=[series_speed[i] for i in moving_indices],

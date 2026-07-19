@@ -418,7 +418,7 @@ class KayakFitGUI(
                 head.pack(anchor="w", fill="x", padx=16, pady=(12, 0))
                 ctk.CTkLabel(
                     head,
-                    text="Pace",
+                    text=label,
                     text_color=SUBTEXT_COLOR,
                     font=ctk.CTkFont(size=13),
                 ).pack(side="left")

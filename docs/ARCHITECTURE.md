@@ -200,8 +200,8 @@ using a semicolon delimiter. It does not decide which records count as activity.
 - skips individually corrupt/truncated rows;
 - rejects a predominantly corrupt file;
 - preserves stationary and repeated valid rows;
-- projects fixed canonical protocol fields: instantaneous speed and
-  stroke-averaged cadence/pull force;
+- projects both instantaneous and stroke-averaged protocol fields for cadence
+  and pull force, plus instantaneous speed;
 - returns the small stdlib-only `app.table.Table` abstraction.
 
 The CSV remains the durable observation source even after FIT generation.
@@ -278,13 +278,13 @@ intervals, so timer time, metrics, and distance are apportioned conservatively.
 
 `app.workout_metrics.compute_finalized_metrics()` is the final FIT/summary
 aggregate boundary, using `app.stats.aggregate_metrics()` for each session/lap
-slice. HR, cadence, and estimated power use positive valid readings and
-active-overlap weights. `app.active_distance.ActiveDistanceAccumulator` owns
+slice. HR, instantaneous cadence, and estimated power use positive valid
+readings and active-overlap weights. Power alone is derived per record from
+stroke-averaged cadence and pull force. `app.active_distance.ActiveDistanceAccumulator` owns
 active distance/time attribution for both finalization and the live dashboard.
 Speed uses the independent recorded instantaneous channel (`app.speed_series`,
 D017): averages are weighted by active represented intervals and maxima are
-raw active peaks. FIT carries that unsmoothed series; chart smoothing is
-presentation-only and restores the raw maximum point.
+raw active peaks. FIT and summary charts carry those unsmoothed points.
 HR-zone time is accumulated over active segments only, with missing-HR time
 presented separately.
 
@@ -314,8 +314,9 @@ FIT message order is:
 4. lap messages for planned steps or natural laps;
 5. one session message.
 
-Records contain timestamp, active-only cumulative distance, speed, HR, cadence,
-estimated power when available, and a synthetic position on the 2 km Hazewinkel
+Records contain timestamp, active-only cumulative distance, instantaneous speed,
+HR, instantaneous cadence, estimated power from averaged cadence/force when
+available, and a synthetic position on the 2 km Hazewinkel
 course derived from that same cumulative distance. Strava uses the positions to
 calculate kayaking overview moving time across pauses. Because sensor samples
 represent windows ending at their timestamps, a metric-free record anchors the
@@ -335,17 +336,18 @@ exact emitted-record series, chart breaks, and planned step bands. Session
 elapsed time reconciles as the sum of lap elapsed time plus following gaps.
 
 `gui.summary_window` renders that model with CustomTkinter and a plain Tk Canvas.
-The chart begins at the first emitted active record; the FIT timer can begin one
-sample window earlier. This prevents a misleading blank one-second visual tail.
+Each chart point uses the CSV sample endpoint, exactly matching the timestamp of
+its FIT sensor record. The FIT timer can begin one represented sample window
+before the first point because the record describes the interval ending there.
 Time-based planned workouts render their phases once in a compact strip above
 the metric panels. Step boundaries are shared alignment guides across those
 panels; the old per-panel phase fills are intentionally not repeated. Distance
 mode omits the strip because elapsed-time boundaries have no exact distance-axis
 mapping.
 
-Headline and split aggregates are verified against decoded FIT output. Chart
-smoothing affects only rendered points; legend averages, maxima, and average
-lines consume the authoritative `WorkoutSummary` aggregates.
+Headline and split aggregates are verified against decoded FIT output. Charts
+show raw recorded points; legend averages, maxima, and average lines consume
+the authoritative `WorkoutSummary` aggregates.
 
 ## Strava and external state
 

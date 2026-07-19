@@ -1,5 +1,6 @@
 """Live metric-field policy regression tests."""
 
+from gui.dashboard_constants import TILES
 from gui.metrics_format import (
     fmt_metres,
     fmt_time_precise,
@@ -33,6 +34,15 @@ def test_live_metrics_use_fixed_canonical_fields() -> None:
     assert formatted["pull"] == "100"
     assert formatted["power"] == "62"
     assert metric_value("speed", packet) == 7.2
+
+
+def test_dashboard_sensor_cards_are_explicitly_live() -> None:
+    labels = {key: label for key, label, _unit, _stats in TILES}
+
+    assert labels["time"] == "Active time"
+    assert labels["distance"] == "Active distance"
+    for key in ("speed", "pace", "stroke", "hr", "pull", "power"):
+        assert labels[key].startswith("Live ")
 
 
 def test_pace_and_targets_use_fixed_canonical_fields() -> None:

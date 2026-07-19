@@ -141,8 +141,8 @@ file…** adds a workout stored somewhere else to the list so the same buttons
 work on it.
 
 **Summary** opens a detail screen for a workout: headline stats (active distance,
-active/elapsed/pause time, average/max speed, heart rate, power, stroke rate), stacked
-per‑metric charts — speed, power, heart rate, cadence and pull force, each
+active/elapsed/pause time, average/max sensor speed, heart rate, power, stroke rate), stacked
+per‑metric raw-point charts — sensor speed, power, heart rate, cadence and pull force, each
 with its own value axis on one shared time axis — time in each heart‑rate
 zone, and a per‑lap splits table. Checkboxes above the chart choose which
 metrics are shown, and hovering shows a crosshair with the exact values at

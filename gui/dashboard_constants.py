@@ -10,12 +10,12 @@ and the main window import them from one place instead of from each other.
 TILES = [
     ("time", "Active time", "", True),
     ("distance", "Active distance", "m", False),
-    ("speed", "Speed", "km/h", True),
-    ("pace", "Pace", "", False),
-    ("stroke", "Stroke rate", "spm", True),
-    ("hr", "Heart rate", "bpm", True),
-    ("pull", "Pull force", "N", True),
-    ("power", "Power", "W · est.", True),
+    ("speed", "Live speed", "km/h", True),
+    ("pace", "Live pace", "", False),
+    ("stroke", "Live stroke rate", "spm", True),
+    ("hr", "Live heart rate", "bpm", True),
+    ("pull", "Live pull force", "N", True),
+    ("power", "Live power", "W · est.", True),
 ]
 
 DASHBOARD_COLS = 4

@@ -178,15 +178,15 @@ def _weighted_positive_mean(
 
 
 def positive_power_values(
-    pull_force: Sequence[Any] | None,
-    cadence: Sequence[Any] | None,
+    power_pull_force: Sequence[Any] | None,
+    power_cadence: Sequence[Any] | None,
     pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
 ) -> list[float]:
     """Per-record power estimates (W), keeping only strictly-positive ones."""
-    if pull_force is None or cadence is None:
+    if power_pull_force is None or power_cadence is None:
         return []
     powers: list[float] = []
-    for pf, cd in zip(pull_force, cadence, strict=False):
+    for pf, cd in zip(power_pull_force, power_cadence, strict=False):
         p = estimate_power(pf, cd, pull_length_m)
         if p is not None and 0 < p <= 65535:
             powers.append(float(p))
@@ -197,7 +197,8 @@ def aggregate_metrics(
     *,
     heart_rate: Sequence[Any] | None = None,
     cadence: Sequence[Any] | None = None,
-    pull_force: Sequence[Any] | None = None,
+    power_cadence: Sequence[Any] | None = None,
+    power_pull_force: Sequence[Any] | None = None,
     speed: Sequence[Any] | None = None,
     sample_weights: Sequence[Any] | None = None,
     pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
@@ -207,8 +208,11 @@ def aggregate_metrics(
     Args:
         heart_rate: per-record heart-rate readings (any may be missing/None;
             0 readings are treated as no signal).
-        cadence: per-record cadence readings (same missing/zero handling).
-        pull_force: per-record pull-force readings (same missing/zero handling).
+        cadence: per-record instantaneous cadence readings (same missing/zero
+            handling).
+        power_cadence: per-record stroke-averaged cadence used only for power.
+        power_pull_force: per-record stroke-averaged pull force used only for
+            power.
         speed: per-record instantaneous speed readings. Average speed is
             time-weighted when ``sample_weights`` is supplied; maximum speed is
             the largest valid reading.
@@ -246,14 +250,18 @@ def aggregate_metrics(
         result["avg_cadence"] = _weighted_positive_mean(cadence, sample_weights, 255)
         result["max_cadence"] = max(cad)
 
-    powers = positive_power_values(pull_force, cadence, pull_length_m)
+    powers = positive_power_values(
+        power_pull_force, power_cadence, pull_length_m
+    )
     if powers:
         if sample_weights is None:
             result["avg_power"] = sum(powers) / len(powers)
         else:
             aligned_power = [
                 estimate_power(force, rate, pull_length_m)
-                for force, rate in zip(pull_force or (), cadence or (), strict=False)
+                for force, rate in zip(
+                    power_pull_force or (), power_cadence or (), strict=False
+                )
             ]
             result["avg_power"] = _weighted_positive_mean(
                 aligned_power, sample_weights, 65535

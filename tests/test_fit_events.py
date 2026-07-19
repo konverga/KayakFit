@@ -50,8 +50,8 @@ def _build_workout():
     moving(8)
 
     columns = [
-        "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
-        "speed_instant", "pull_force", "active", "sample_duration",
+        "timestamp", "session_elapsed", "heart_rate", "cadence", "cadence_instant", "distance",
+        "speed_instant", "pull_force", "pull_force_instant", "active", "sample_duration",
     ]
     rows = [
         {
@@ -59,9 +59,11 @@ def _build_workout():
             "session_elapsed": i + 2,
             "heart_rate": 120,
             "cadence": 80,
+            "cadence_instant": 80,
             "distance": dist[i],
             "speed_instant": speed[i],
             "pull_force": 200,
+            "pull_force_instant": 200,
             "active": 1 if speed[i] > 0 else 0,
             # The first sensor record represents two seconds, matching the
             # real regression where Strava previously dropped two seconds.

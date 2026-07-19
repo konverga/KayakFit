@@ -25,8 +25,8 @@ from app.summary import compute_summary
 from app.table import Table
 
 COLUMNS = [
-    "timestamp", "session_elapsed", "heart_rate", "cadence", "distance",
-    "speed_instant", "pull_force", "active", "sample_duration",
+    "timestamp", "session_elapsed", "heart_rate", "cadence", "cadence_instant", "distance",
+    "speed_instant", "pull_force", "pull_force_instant", "active", "sample_duration",
 ]
 T0 = 1_700_000_000_000  # arbitrary epoch ms
 
@@ -48,9 +48,11 @@ class _WorkoutBuilder:
                 "session_elapsed": self._i + 1,
                 "heart_rate": 140,
                 "cadence": 70 if advance_m else 0,
+                "cadence_instant": 70 if advance_m else 0,
                 "distance": self._d,
                 "speed_instant": speed,
                 "pull_force": 180 if advance_m else 0,
+                "pull_force_instant": 180 if advance_m else 0,
                 "active": 1 if advance_m else 0,
                 "sample_duration": 1,
             }
@@ -115,7 +117,7 @@ def test_elapsed_step_bounds_keep_inactive_warmup_and_cooldown() -> None:
     """Planned elapsed bounds retain inactive edges and ignore receipt jitter."""
     columns = COLUMNS
     rows = []
-    for index, (elapsed, active, distance) in enumerate(
+    for elapsed, active, distance in (
         ((2, 0, 0.0), (4, 1, 4.0), (6, 1, 8.0), (8, 0, 8.0))
     ):
         rows.append(
@@ -124,8 +126,10 @@ def test_elapsed_step_bounds_keep_inactive_warmup_and_cooldown() -> None:
                 "session_elapsed": elapsed,
                 "heart_rate": 140,
                 "cadence": 70 if active else 0,
+                "cadence_instant": 70 if active else 0,
                 "distance": distance,
                 "pull_force": 180 if active else 0,
+                "pull_force_instant": 180 if active else 0,
                 "active": active,
                 "sample_duration": 2,
                 "speed_instant": 2.0 if active else 0.0,
@@ -164,7 +168,7 @@ def test_elapsed_step_bounds_keep_inactive_warmup_and_cooldown() -> None:
     assert [lap.elapsed_time_s for lap in summary.laps] == [2.0, 4.0, 2.0]
     assert [lap.active_time_s for lap in summary.laps] == [0.0, 4.0, 0.0]
     assert [lap.distance_m for lap in summary.laps] == [0.0, 8.0, 0.0]
-    assert summary.series_t == [2.0, 4.0]
+    assert summary.series_t == [4.0, 6.0]
     assert summary.series_time_bounds == (0.0, 8.0)
 
 
@@ -269,9 +273,11 @@ def test_program_lap_is_clipped_to_active_signal() -> None:
                 "session_elapsed": i + 1,
                 "heart_rate": 120 + i,
                 "cadence": 70 if active else 0,
+                "cadence_instant": 70 if active else 0,
                 "distance": distances[i],
                 "speed_instant": 3.0 if active else 0.0,
                 "pull_force": 180 if active else 0,
+                "pull_force_instant": 180 if active else 0,
                 "active": active,
                 "sample_duration": 1,
             }
@@ -306,9 +312,11 @@ def test_sample_window_crossing_step_boundary_is_split_exactly() -> None:
                 "session_elapsed": 2,
                 "heart_rate": 150,
                 "cadence": 80,
+                "cadence_instant": 80,
                 "distance": 10.0,
                 "speed_instant": 5.0,
                 "pull_force": 200,
+                "pull_force_instant": 200,
                 "active": 1,
                 "sample_duration": 2.0,
             }
@@ -345,9 +353,11 @@ def test_centimetre_split_keeps_every_average_bounded_by_its_maximum() -> None:
                 "session_elapsed": 1,
                 "heart_rate": 150,
                 "cadence": 80,
+                "cadence_instant": 80,
                 "distance": 0.01,
                 "speed_instant": 0.01,
                 "pull_force": 200,
+                "pull_force_instant": 200,
                 "active": 1,
                 "sample_duration": 1.0,
             }
@@ -387,9 +397,11 @@ def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
             "session_elapsed": 1,
             "heart_rate": 140,
             "cadence": 70,
+            "cadence_instant": 70,
             "distance": 4.0,
             "speed_instant": 3.0,
             "pull_force": 180,
+            "pull_force_instant": 180,
             "active": 1,
             "sample_duration": 1,
         },
@@ -398,9 +410,11 @@ def test_session_speed_is_weighted_lap_speed_and_raw_peak() -> None:
             "session_elapsed": 4,
             "heart_rate": 140,
             "cadence": 70,
+            "cadence_instant": 70,
             "distance": 7.0,
             "speed_instant": 3.0,
             "pull_force": 180,
+            "pull_force_instant": 180,
             "active": 1,
             "sample_duration": 3,
         },
@@ -454,9 +468,11 @@ def test_terminal_planned_step_uses_the_persisted_session_endpoint() -> None:
             "session_elapsed": i,
             "heart_rate": 140,
             "cadence": 70,
+            "cadence_instant": 70,
             "distance": float(i * 3),
             "speed_instant": 3.0,
             "pull_force": 180,
+            "pull_force_instant": 180,
             "active": 1,
             "sample_duration": 1,
         }
@@ -497,9 +513,11 @@ def test_resume_odometer_jump_is_credited_independently_of_speed(
             "session_elapsed": i + 1,
             "heart_rate": 140,
             "cadence": 70 if active else 0,
+            "cadence_instant": 70 if active else 0,
             "distance": distances[i],
             "speed_instant": speeds[i],
             "pull_force": 180 if active else 0,
+            "pull_force_instant": 180 if active else 0,
             "active": active,
             "sample_duration": 1,
         }
@@ -528,9 +546,11 @@ def test_meaningful_pause_breaks_chart_without_splitting_planned_lap() -> None:
                 "session_elapsed": i + 1,
                 "heart_rate": 130 + i,
                 "cadence": 70 if active else 0,
+                "cadence_instant": 70 if active else 0,
                 "distance": distance,
                 "speed_instant": 3.0 if active else 0.0,
                 "pull_force": 180 if active else 0,
+                "pull_force_instant": 180 if active else 0,
                 "active": active,
                 "sample_duration": 1,
             }
@@ -586,9 +606,11 @@ def test_summary_keeps_motionless_rest_as_empty_planned_step() -> None:
                 "session_elapsed": i + 1,
                 "heart_rate": 140 if active else 100,
                 "cadence": 70 if active else 0,
+                "cadence_instant": 70 if active else 0,
                 "distance": distance,
                 "speed_instant": 3.0 if active else 0.0,
                 "pull_force": 180 if active else 0,
+                "pull_force_instant": 180 if active else 0,
                 "active": active,
                 "sample_duration": 1,
             }
@@ -642,9 +664,11 @@ def test_planned_rest_survives_a_recording_gap() -> None:
             "session_elapsed": elapsed,
             "heart_rate": 140,
             "cadence": 70,
+            "cadence_instant": 70,
             "distance": float(i * 3),
             "speed_instant": 3.0,
             "pull_force": 180,
+            "pull_force_instant": 180,
             "active": 1,
             "sample_duration": 1,
         }

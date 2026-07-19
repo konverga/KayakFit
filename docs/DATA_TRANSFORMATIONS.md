@@ -14,7 +14,8 @@ workout and one aggregate result. Within KayakFit:
 - session active time equals the sum of lap active times;
 - paused intervals never lower speed, heart-rate, cadence, or power averages;
 - average speed is no greater than maximum speed when speed is available;
-- chart, summary, and FIT use recorded instantaneous speed;
+- chart, summary, and FIT use recorded instantaneous sensor points, except
+  estimated power, which uses stroke-averaged cadence and pull force;
 - main-window sensor cards consistently use averaged device fields;
 - decoded FIT session/lap metrics match the summary, subject to FIT precision.
 
@@ -154,8 +155,10 @@ instantaneous column. There is no processing-mode setting.
 The main workout dashboard is a live presentation surface, not a finalized
 workout aggregate. Its speed, pace, cadence, pull-force, and power cards use the
 ergometer's averaged fields. Each card's secondary average/max is accumulated
-from the same field as its primary value. This does not change the recorded
-instantaneous speed used by the graph, summary, or FIT file.
+from the same field as its primary value. Sensor-card headings are explicitly
+labelled `Live` so these values are not mistaken for finalized statistics. This
+does not change the recorded instantaneous speed used by the graph, summary, or
+FIT file.
 
 ### Why speed is not distance / active time
 
@@ -178,37 +181,38 @@ The second lap's recorded values produce `9.27 km/h`, not `9.25 km/h`. No
 reproducible calculation over the saved two-decimal speed samples produces
 `9.25 km/h` without adding an undocumented correction.
 
-### Chart smoothing
+### Chart points
 
-The graph applies a five-record centered moving average for readability. This
-is presentation-only:
-
-- FIT records retain unsmoothed instantaneous speed;
-- session/lap average and maximum values use unsmoothed records;
-- smoothing restarts at every active run;
-- the raw maximum point is restored after smoothing and included in the y-axis
-  bounds, so the maximum shown in the card is visible and hoverable.
+The graph and hover readouts show the raw active sensor points without a moving
+average. For long workouts, the Canvas selects real recorded boundary and
+extreme points to fit the available pixels; it never replaces them with
+calculated averages. FIT records and session/lap aggregates use the same
+unsmoothed source points. Every time-axis point uses the row's canonical CSV
+sample endpoint, which is also the timestamp written to its FIT sensor record.
 
 ## 5. Other active averages
 
 Only active interval overlaps participate in heart-rate, cadence, and estimated
-power aggregates.
+power aggregates. Summary/FIT cadence and the summary pull-force chart use the
+recorded instantaneous protocol fields. Heart rate has one recorded source.
 
 - Missing or zero readings mean no valid signal and are excluded.
 - Averages are weighted by active overlap seconds.
 - Maximum is the largest valid active reading.
 - Missing-HR active time remains visible as `No HR signal` in the zone chart.
 
-Power is estimated per record:
+Power is the sole averaged-channel exception. It is estimated per record:
 
 ```text
 power W = pull force N * configured pull length m * cadence spm / 60
 ```
 
-Cadence and pull force always use the ergometer's stroke-averaged fields.
-Estimated power uses those same fields because that is the calibrated model.
-The saved pull length makes historical power processing reproducible; no
-metric-source preference is needed.
+For this formula, cadence and pull force use the ergometer's stroke-averaged
+fields because that is the calibrated model. Lap/session average power is the
+active-time-weighted mean of those per-record estimates, not the product of
+whole-lap/session average force and cadence. The saved pull length makes
+historical power processing reproducible; no metric-source preference is
+needed.
 
 ## 6. Free-workout laps
 
@@ -265,8 +269,8 @@ The generated FIT contains:
 - timer `START`/`STOP_ALL` events around every exact active run;
 - one sensor record per positive-duration active CSV window;
 - active-only cumulative distance;
-- unsmoothed recorded instantaneous speed;
-- valid active HR, cadence, and estimated power;
+- unsmoothed recorded instantaneous speed and cadence;
+- valid active HR and estimated power derived from averaged cadence/force;
 - exact-run free laps or performed-step planned laps;
 - complete session elapsed time and active timer time;
 - lap/session distance, averages, maxima, and one activity summary.

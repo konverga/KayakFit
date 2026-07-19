@@ -78,8 +78,8 @@ Important workout invariants include:
   decoding.
 - Every session/lap average is at most its corresponding maximum, and the
   session speed maximum is at least every lap speed maximum.
-- FIT speed records, averages, and peaks use active instantaneous sensor values;
-  chart smoothing is presentation-only but preserves the visible raw maximum.
+- FIT speed records, averages, peaks, and summary chart points use active
+  instantaneous sensor values.
 - Session active time equals summed lap active time, and session active distance
   equals summed lap active distance.
 - Split formatting preserves finalized centimetre and millisecond values rather
