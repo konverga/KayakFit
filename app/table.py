@@ -1,11 +1,10 @@
 """Minimal columnar table backed by plain Python lists.
 
-The workout CSVs are tiny (a few hundred rows), so a full DataFrame engine is
-unnecessary weight. This provides just the operations the reader, FIT exporter
-and session summary use, with null-skipping maximums and positional access.
+This provides only the column and row access needed by workout processing,
+without adding a DataFrame dependency to the packaged application.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -53,21 +52,6 @@ class Table:
     def row(self, index: int) -> dict[str, Any]:
         """Return a single row as a dict (supports negative indices)."""
         return dict(self._rows[index])
-
-    def slice(self, start: int, length: int) -> Table:
-        """Return a contiguous sub-range as a new Table."""
-        return Table(self._columns, self._rows[start : start + length])
-
-    def select_rows(self, indices: Iterable[int]) -> Table:
-        """Return the given rows (by position) as a new Table."""
-        return Table(self._columns, [self._rows[i] for i in indices])
-
-    # ---- aggregates (skip None, matching the old DataFrame behaviour) ------
-    def column_max(self, name: str) -> Any | None:
-        """Return the max of a column's non-null values (None if all null)."""
-        values = [v for v in self.get_column(name) if v is not None]
-        return max(values) if values else None
-
 
 def parse_value(raw: str, kind: str) -> Any | None:
     """Parse a CSV cell to the configured type (``"int"`` or ``"decimal"``).

@@ -1,27 +1,11 @@
-"""
-Tests for heart-rate zone classification (auto and manual).
+"""Tests for heart-rate zone classification (auto and manual)."""
 
-metrics_format has no GUI dependency, so it can be imported directly.
-
-Run from the project root:
-
-    python tests/test_hr_zones.py
-"""
-
-import importlib.util
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))  # metrics_format imports app.power
-spec = importlib.util.spec_from_file_location("mf", ROOT / "gui" / "metrics_format.py")
-assert spec is not None and spec.loader is not None
-mf = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mf)
+from app.stats import zone_lower_bounds
+from gui import metrics_format as mf
 
 
 def test_auto_bounds_from_max_hr() -> None:
-    bounds = mf.zone_lower_bounds(max_hr=185)
+    bounds = zone_lower_bounds(max_hr=185)
     assert bounds == [0, 111, 130, 148, 166], bounds
     print(f"  ok: auto bounds for max 185 -> {bounds}")
 
@@ -36,7 +20,7 @@ def test_auto_classification() -> None:
 
 def test_manual_bounds_used() -> None:
     manual = [100, 120, 140, 160, 175]
-    assert mf.zone_lower_bounds(max_hr=185, zones=manual) == manual
+    assert zone_lower_bounds(max_hr=185, zones=manual) == manual
     # Below the first bound still classifies as Z1.
     assert mf.hr_zone(80, max_hr=185, zones=manual) == 0
     assert mf.hr_zone(130, max_hr=185, zones=manual) == 1
@@ -46,8 +30,8 @@ def test_manual_bounds_used() -> None:
 
 def test_invalid_manual_falls_back_to_auto() -> None:
     # Not five values, or not ascending -> ignored in favour of max_hr.
-    assert mf.zone_lower_bounds(max_hr=185, zones=[100, 120]) == [0, 111, 130, 148, 166]
-    assert mf.zone_lower_bounds(max_hr=185, zones=[100, 90, 140, 160, 175]) == [
+    assert zone_lower_bounds(max_hr=185, zones=[100, 120]) == [0, 111, 130, 148, 166]
+    assert zone_lower_bounds(max_hr=185, zones=[100, 90, 140, 160, 175]) == [
         0, 111, 130, 148, 166,
     ]
     print("  ok: invalid manual config falls back to auto")

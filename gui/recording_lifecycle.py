@@ -314,7 +314,7 @@ class RecordingLifecycleMixin(_MixinBase):
             return
 
         selected_label = self.program_var.get()
-        selected = self._selected_program_name(selected_label)
+        selected = self._selected_program_id(selected_label)
         program = self._programs.get(selected)  # None for "Free workout"
         # A program workout reports laps step-based afterwards (summary + FIT),
         # so its live lap chip is suppressed to keep the two consistent.
@@ -435,8 +435,8 @@ class RecordingLifecycleMixin(_MixinBase):
 
     def _show_summary(self, ev: dict[str, Any]) -> None:
         dist = ev.get("distance_m", 0)
-        active = fmt_time(ev.get("active_time_s", ev.get("duration_s", 0)))
-        elapsed = fmt_time(ev.get("elapsed_time_s", ev.get("duration_s", 0)))
+        active = fmt_time(ev.get("active_time_s", 0))
+        elapsed = fmt_time(ev.get("elapsed_time_s", 0))
         points = ev.get("record_count", 0)
         self.recording.csv_path = ev.get("csv_path")
         self.recording.points = points

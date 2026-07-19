@@ -28,10 +28,9 @@ not describe aspirational functionality. Verification labels mean:
 | Automatic Strava upload | settings and export worker | Implemented |
 | System/light/dark appearance switch | `gui/main_gui.py` | Implemented; choice is persisted |
 
-Advanced reconnect, stale-data, autopause, inactivity-stop, and power-model
-values exist in `config.yml` defaults but are not exposed as ordinary settings.
-The README's former reference to a configurable handshake mode is not backed by
-the UI; the handshake sequence is fixed by the ergometer implementation.
+Advanced reconnect, stale-data, inactivity-stop, and power-model values exist
+in `config.yml` defaults but are not exposed as ordinary settings. The
+ergometer handshake and activity-run segmentation have no user-facing tuning.
 
 The “Total Expended Energy” display choice configures the ergometer's own
 screen. It does not enable calorie calculation in KayakFit.
@@ -44,13 +43,13 @@ screen. It does not enable calorie calculation in KayakFit.
 | Two-action stop confirmation | recording lifecycle | Implemented |
 | Live time, distance, speed, pace, cadence, HR, pull force, and power | `gui/metrics_format.py` | Implemented with one selected-field policy |
 | 200/500/1000 m pace selection | `format_pace()` and toolbar selector | Implemented |
-| Live average/maximum previews | `RecordingLifecycleMixin._update_stat()` | Partial: previews are not the authoritative final FIT aggregates |
+| Live average/maximum previews | `RecordingLifecycleMixin._update_stat()` | Implemented; previews use the averaged live channels and are intentionally separate from finalized FIT aggregates |
 | HR-zone tile, legend, and ranges | `gui/device_status.py` | Tested at pure-function level |
 | Ergometer, HRM, Strava, battery, reconnect, and stale-data indicators | device-status and recording-lifecycle mixins | Implemented |
 | Continue without unavailable HRM | `WorkoutSession` plus GUI prompt | Implemented |
 | Keep the display awake | `app/keep_awake.py` | Implemented |
 | Data-stall warning | `WorkoutSession._watchdog()` | Implemented |
-| Automatic stop after prolonged inactivity | workout watchdog | Partial: cumulative-distance resets can cause a false stop |
+| Automatic stop after prolonged inactivity | workout watchdog | Tested; inactivity follows `active_paddling`, not cumulative distance |
 | Maximum six-hour recording guard | `workout_worker.py` | Implemented |
 
 BLE parsing, packet reassembly, and segmentation are tested without hardware.
@@ -87,7 +86,7 @@ copied there once so users can edit them.
 
 Implemented behavior:
 
-- Warm-up, work, rest, cooldown, effort, and custom step labels/types.
+- Warm-up, work, rest, cooldown, and effort steps with optional custom labels.
 - Time-based, distance-based, and open/manual steps.
 - Nested repeat blocks with depth, operation, and total-step limits.
 - Current and next step, remaining time/distance, step progress, and overall
@@ -104,9 +103,9 @@ Implemented behavior:
   time. An inactive rest remains visible with blank active averages.
 - Planned step bands on time-based summary charts.
 
-Status: **Partial**. Parsing, exact overshoot-preserving progression, and
-sample-window attribution across performed-step boundaries are tested. Unknown
-duration kinds still silently become open steps.
+Status: **Tested**. The strict schema rejects unknown fields, duration kinds,
+step types, targets, and non-integral repeat counts. Progression preserves exact
+overshoot boundaries, and performed-step attribution splits sample windows.
 
 ## Recording, recovery, and files
 
@@ -127,7 +126,7 @@ Implemented behavior:
 - Semicolon-delimited CSV, one row per ergometer response.
 - Flush after every row and periodic filesystem sync.
 - Read-only protection after close where supported.
-- Defensive CSV parsing with required/optional schema handling.
+- Defensive CSV parsing with an exact versioned schema.
 - Atomic metadata and planned-step replacement.
 - Active-workout marker and recovery prompt after interruption.
 - Post-workout card with summary, FIT, upload, and discard actions.
@@ -235,8 +234,8 @@ restart without initiating a new upload workflow.
 - Bounded worker shutdown and stop-aware BLE reconnect.
 - Atomic config and FIT replacement.
 
-Status: **Implemented**. Worker success/failure signaling remains too weak in
-some paths, as described in the roadmap.
+Status: **Implemented**. Workers return structured success, cancellation,
+partial-durability, failure, and pending-upload outcomes.
 
 ## Explicitly not implemented
 

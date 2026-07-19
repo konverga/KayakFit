@@ -38,7 +38,6 @@ class ProgramRunner:
         self._elapsed = 0.0
         self._distance = 0.0
         self._previous_elapsed = 0.0
-        self._previous_distance = 0.0
         self._last_raw_distance: float | None = None
 
     @property
@@ -249,7 +248,6 @@ class ProgramRunner:
                 break
 
         self._previous_elapsed = self._elapsed
-        self._previous_distance = self._distance
         return self._result(transitions)
 
     def advance(self) -> dict[str, Any]:

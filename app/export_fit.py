@@ -42,12 +42,12 @@ from fit_tool.profile.profile_type import (
 
 from .finalized_workout import ActivitySegment, FinalizedWorkout, finalize_workout
 from .logger import Logger
-from .power import estimate_power, normalize_pull_length
+from .power import DEFAULT_PULL_LENGTH_M, estimate_power, normalize_pull_length
 from .read_csv import CsvReader, CsvReadError
 from .segmentation import load_program_steps
 from .speed_series import recorded_speed_mps
 from .table import Table
-from .workout_metadata import load_workout_config, load_workout_metadata
+from .workout_metadata import load_workout_metadata
 from .workout_metrics import SliceMetrics, compute_finalized_metrics
 from .workout_paths import WorkoutPaths
 
@@ -80,22 +80,17 @@ def _synthetic_gps_position(distance_m: float) -> tuple[float, float]:
 class FitExporter:
     """Export workout data to FIT format for indoor kayaking."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        """Initialize the FIT exporter.
-
-        Args:
-            config: Configuration dictionary containing log_level and other settings.
-        """
-        self.config = config
+    def __init__(self, pull_length_m: Any = DEFAULT_PULL_LENGTH_M) -> None:
+        """Initialize the FIT exporter with recorded power calibration."""
+        self.pull_length_m = normalize_pull_length(pull_length_m)
         self.logger = Logger.get_logger(name=__name__)
 
     @staticmethod
-    def convert_csv_to_fit(file_path: str, config: dict[str, Any]) -> dict[str, Any]:
+    def convert_csv_to_fit(file_path: str) -> dict[str, Any]:
         """Convert a CSV file to FIT format.
 
         Args:
             file_path: Path to the CSV file.
-            config: Configuration dictionary.
 
         Returns:
             {"success": True, "file_path": Path(...)} on success or
@@ -104,8 +99,9 @@ class FitExporter:
         try:
             file_path_obj = Path(file_path)
             metadata = load_workout_metadata(file_path_obj)
-            config = load_workout_config(file_path_obj)
-            csv_reader = CsvReader(file_path=str(file_path_obj), config=config)
+            processing_config = metadata["processing_config"]
+            assert isinstance(processing_config, dict)
+            csv_reader = CsvReader(file_path=str(file_path_obj))
             workout_df = csv_reader.read_all()
 
             if workout_df.is_empty():
@@ -122,7 +118,7 @@ class FitExporter:
             )
             if metadata["workout_mode"] == "planned" and program_steps is None:
                 raise ValueError("Planned v1 workout is missing its step timeline")
-            exporter = FitExporter(config=config)
+            exporter = FitExporter(processing_config["pull_length_m"])
             success = exporter.export(
                 workout_df=workout_df,
                 output_path=str(fit_path),
@@ -158,7 +154,7 @@ class FitExporter:
         """Export workout data to FIT file.
 
         Args:
-            workout_df: Table of data points (one per second).
+            workout_df: Table of recorded sensor samples.
             output_path: Path to output .fit file.
             program_steps: Optional program step timeline; when present the FIT
                 laps follow the program's steps instead of auto-pause segments.
@@ -184,7 +180,7 @@ class FitExporter:
             finalized_metrics = compute_finalized_metrics(
                 workout_df,
                 finalized,
-                pull_length_m=self.config.get("pull_length_m"),
+                pull_length_m=self.pull_length_m,
             )
             fit_start = datetime.fromtimestamp(
                 finalized.timeline_start_time_ms / 1000
@@ -391,7 +387,7 @@ class FitExporter:
                 power = estimate_power(
                     power_pull_force_col[i],
                     power_cadence_col[i],
-                    normalize_pull_length(self.config.get("pull_length_m")),
+                    self.pull_length_m,
                 )
                 if power is not None and 0 < power <= 65535:
                     record.power = power

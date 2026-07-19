@@ -16,11 +16,8 @@ git diff --check
 ```
 
 The suite is safe to run in one pytest process and uses the locked runtime
-dependencies rather than replacing packages in `sys.modules`.
-
-At the completion of critical roadmap phases 1–3 on 2026-07-13, the repository
-contained 118 passing tests. Treat that number as a
-historical checkpoint, not a fixed requirement; new coverage should increase it.
+dependencies rather than replacing packages in `sys.modules`. Do not rely on a
+fixed test count; add or update coverage with each behavior change.
 
 ## Choosing tests during development
 
@@ -149,7 +146,7 @@ merely to work around a sandbox or unavailable network.
 `main`:
 
 - Linux: lock consistency, Ruff, strict mypy, and generated-requirements drift.
-- macOS and Windows: every test module in an isolated pytest process.
+- macOS and Windows: the complete suite in one pytest process.
 
 A local pass is necessary but not sufficient for merge; platform CI must also
 be green.

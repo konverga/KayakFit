@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.field_mapping import ALL_FIELDS
+from app.field_mapping import CSV_COLUMNS
 from app.read_csv import CsvReader, CsvReadError
 
 CONFIG = {"log_level": "warning"}
@@ -71,7 +71,7 @@ def _row(i: int, speed: str = "3.20", distance: str | None = None) -> dict[str, 
 
 
 def _write(path: Path, rows: list[Any], full_schema: bool = True) -> None:
-    fields = ALL_FIELDS if full_schema else ALL_FIELDS[:5]
+    fields = CSV_COLUMNS if full_schema else CSV_COLUMNS[:5]
     _write_cols(path, rows, fields)
 
 
@@ -87,7 +87,7 @@ def test_parse_types_and_shape() -> None:
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "w.csv"
         _write(p, [_row(i) for i in range(1, 6)])
-        t = CsvReader(str(p), CONFIG).read_all()
+        t = CsvReader(str(p)).read_all()
         assert t.columns == [
             "timestamp", "session_elapsed", "sample_duration",
             "device_elapsed", "device_window", "kayakfirst_timestamp",
@@ -108,7 +108,7 @@ def test_unused_malformed_pace_does_not_discard_sensor_row() -> None:
         row["pace_200m__s"] = "(0, 0)"
         _write(p, [row])
 
-        table = CsvReader(str(p), CONFIG).read_all()
+        table = CsvReader(str(p)).read_all()
 
         assert table.height == 1
         assert table.get_column("distance") == [Decimal("3.20")]
@@ -126,7 +126,7 @@ def test_canonical_metric_channels_are_fixed() -> None:
         row["pull_force_instant__n"] = 200
         _write(p, [row])
 
-        table = CsvReader(str(p), CONFIG).read_all()
+        table = CsvReader(str(p)).read_all()
 
         assert table.get_column("speed_instant") == [Decimal("3.25")]
         assert table.get_column("cadence") == [60]
@@ -143,7 +143,7 @@ def test_stationary_rows_are_preserved() -> None:
         rows = [_row(i) for i in range(1, 4)]
         rows += [_row(i, speed="0.00", distance=f"{3 * 3.2:.2f}") for i in range(4, 6)]
         _write(p, rows)
-        t = CsvReader(str(p), CONFIG).read_all()
+        t = CsvReader(str(p)).read_all()
         assert t.height == 5, f"expected all 5 rows, got {t.height}"
         print("  ok: stationary rows preserved for pause detection")
 
@@ -162,7 +162,7 @@ def test_repeated_payload_rows_are_preserved() -> None:
         r3["timestamp"] = r1["timestamp"] + 2000
         r3["session_elapsed__s"] = 3
         _write(p, [r1, dup, r3])
-        t = CsvReader(str(p), CONFIG).read_all()
+        t = CsvReader(str(p)).read_all()
         assert t.height == 3, f"expected all repeated samples, got {t.height}"
         assert t.get_column("timestamp")[0] == r1["timestamp"]
         print("  ok: repeated payload rows preserved")
@@ -173,7 +173,7 @@ def test_schema_mismatch_raises() -> None:
         p = Path(d) / "bad.csv"
         _write(p, [_row(i) for i in range(1, 4)], full_schema=False)
         try:
-            CsvReader(str(p), CONFIG).read_all()
+            CsvReader(str(p)).read_all()
             raised = False
         except CsvReadError:
             raised = True
@@ -189,7 +189,7 @@ def test_one_corrupt_cell_keeps_other_rows() -> None:
         rows[9]["distance__m"] = "abc"  # 10th data row -> line 11, decimal col
         _write(p, rows)
         with _capture_reader_logs() as recs:
-            t = CsvReader(str(p), CONFIG).read_all()
+            t = CsvReader(str(p)).read_all()
         assert t.height == 19, f"expected 19 surviving rows, got {t.height}"
         msgs = [r.getMessage() for r in recs]
         assert any("line 11" in m and "distance__m" in m for m in msgs), \
@@ -206,7 +206,7 @@ def test_mostly_corrupt_file_raises() -> None:
             rows[j]["distance__m"] = "xx"
         _write(p, rows)
         try:
-            CsvReader(str(p), CONFIG).read_all()
+            CsvReader(str(p)).read_all()
             raised, msg = False, ""
         except CsvReadError as e:
             raised, msg = True, str(e)
@@ -218,10 +218,10 @@ def test_mostly_corrupt_file_raises() -> None:
 def test_missing_column_is_rejected() -> None:
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "w.csv"
-        fields = [f for f in ALL_FIELDS if f != "active_paddling"]
+        fields = [f for f in CSV_COLUMNS if f != "active_paddling"]
         _write_cols(p, [_row(i) for i in range(1, 6)], fields)
         with pytest.raises(CsvReadError, match="active_paddling"):
-            CsvReader(str(p), CONFIG).read_all()
+            CsvReader(str(p)).read_all()
 
 
 def test_unknown_extra_column_is_rejected() -> None:
@@ -230,19 +230,19 @@ def test_unknown_extra_column_is_rejected() -> None:
         rows = [_row(i) for i in range(1, 6)]
         for r in rows:
             r["future_metric"] = 42
-        _write_cols(p, rows, [*ALL_FIELDS, "future_metric"])
+        _write_cols(p, rows, [*CSV_COLUMNS, "future_metric"])
         with pytest.raises(CsvReadError, match="future_metric"):
-            CsvReader(str(p), CONFIG).read_all()
+            CsvReader(str(p)).read_all()
 
 
 def test_missing_required_column_raises() -> None:
     # Secondary fix: a load-bearing column missing still fails clearly.
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "bad.csv"
-        fields = [f for f in ALL_FIELDS if f != "distance__m"]
+        fields = [f for f in CSV_COLUMNS if f != "distance__m"]
         _write_cols(p, [_row(i) for i in range(1, 6)], fields)
         try:
-            CsvReader(str(p), CONFIG).read_all()
+            CsvReader(str(p)).read_all()
             raised, msg = False, ""
         except CsvReadError as e:
             raised, msg = True, str(e)
@@ -262,7 +262,7 @@ def test_length_mismatch_row_still_skipped() -> None:
         lines[3] = ";".join(lines[3].split(";")[:-4])  # truncate 3rd data row
         p.write_text("\n".join(lines) + "\n", encoding="utf-8")
         with _capture_reader_logs() as recs:
-            t = CsvReader(str(p), CONFIG).read_all()
+            t = CsvReader(str(p)).read_all()
         assert t.height == 4, f"expected 4 rows after skipping truncated one, got {t.height}"
         assert any("field-count mismatch" in r.getMessage() for r in recs), \
             "truncated row skip should be logged"
@@ -275,7 +275,7 @@ def test_empty_file_raises() -> None:
         p = Path(d) / "empty.csv"
         p.write_text("", encoding="utf-8")
         try:
-            CsvReader(str(p), CONFIG).read_all()
+            CsvReader(str(p)).read_all()
             raised = False
         except CsvReadError:
             raised = True

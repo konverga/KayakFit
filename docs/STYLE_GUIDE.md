@@ -176,8 +176,7 @@ or full credential-bearing URLs.
 ## Tests
 
 - Tests are ordinary pytest-discovered `test_*` functions with plain asserts.
-- Add every new test module to the explicit mypy override list in
-  `pyproject.toml`.
+- New test modules are automatically covered by the `tests.*` mypy override.
 - Keep tests deterministic and independent of user home/config state by using
   temporary paths and patched boundaries.
 - Test invariants, not only example outputs. Important workout invariants include:

@@ -3,8 +3,7 @@
 The single place that names the KayakFirst ergometer's packet fields and the
 workout CSV's columns: ``FIELD_MAP`` maps packet indices to field names,
 ``CSV_COLUMNS`` / ``COLUMN_TYPES`` define the CSV schema and each column's
-parse type (int or decimal), and ``ALL_FIELDS`` is the full written-column
-order. Used by the BLE parser, the CSV reader/writer, and the FIT exporter so
+parse type (int or decimal). Used by the BLE parser, the CSV reader/writer, and the FIT exporter so
 the data structure is never defined twice.
 """
 
@@ -20,7 +19,7 @@ _DECIMAL_COLUMNS = {
 }
 
 # Ordered list of every CSV column, and each column's parse type
-# ("int" or "decimal"). Replaces the former Polars schema.
+# ("int" or "decimal").
 CSV_COLUMNS: list[str] = [
     "timestamp",
     "session_elapsed__s",
@@ -85,17 +84,3 @@ FIELD_MAP: dict[int, str] = {
     # larger on the first poll (covers everything since the workout started).
     23: "window_size__s",
 }
-
-ALL_FIELDS: list[str] = list(CSV_COLUMNS)
-
-
-def get_field_name(index: int) -> str:
-    """Get field name for a given packet index.
-
-    Args:
-        index: Index in the packet (1-based after skipping '6' prefix).
-
-    Returns:
-        Field name (returns col_N for unknown indices).
-    """
-    return FIELD_MAP.get(index, f"col_{index}")

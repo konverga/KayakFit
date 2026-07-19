@@ -1,7 +1,7 @@
 """Primary user interface for KayakFit, built with customtkinter.
 
-During a workout the window shows a live metric dashboard fed by the worker's
-per-second data; a compact, collapsible log keeps the detailed output
+During a workout the window shows a live metric dashboard fed by recorded
+sensor samples; a compact, collapsible log keeps the detailed output
 available.
 
 The heavy lifting (BLE, CSV, FIT export, Strava) runs in background workers via
@@ -142,7 +142,7 @@ class KayakFitGUI(
             program_mod.install_examples()
             warnings: list[str] = []
             self._programs = {
-                p.name: p for p in program_mod.list_programs(warnings)
+                p.identifier: p for p in program_mod.list_programs(warnings)
             }
             self._pending_program_warnings = warnings
             self._program_warn_sig = tuple(warnings)

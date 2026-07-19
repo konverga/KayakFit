@@ -73,7 +73,7 @@ def test_totals_and_series():
     assert abs(s.distance_m - 2.5 * n) < 1e-6
     # One continuous lap covering the whole workout.
     assert len(s.laps) == 1
-    assert abs(s.duration_s - n) < 1e-6
+    assert abs(s.active_time_s - n) < 1e-6
     # Constant 2.5 m/s
     assert s.avg_speed_mps is not None and s.max_speed_mps is not None
     assert s.avg_hr is not None
@@ -114,10 +114,10 @@ def test_two_laps_from_gap():
     s = compute_summary(Table(COLUMNS, rows))
 
     assert len(s.laps) == 2
-    assert abs(s.laps[0].duration_s - 30.0) < 1e-6
-    assert abs(s.laps[1].duration_s - 30.0) < 1e-6
+    assert abs(s.laps[0].active_time_s - 30.0) < 1e-6
+    assert abs(s.laps[1].active_time_s - 30.0) < 1e-6
     # Moving time excludes the 60s pause.
-    assert abs(s.duration_s - 60.0) < 1e-6
+    assert abs(s.active_time_s - 60.0) < 1e-6
     assert s.active_time_s == 60.0
     assert s.elapsed_time_s == 120.0
     assert s.pause_time_s == 60.0
@@ -217,7 +217,7 @@ def test_each_active_signal_gap_fragments_chart_and_laps():
             }
         )
     summary = compute_summary(Table(columns, rows))
-    assert summary.duration_s == 6.0
+    assert summary.active_time_s == 6.0
     assert len(summary.laps) == 2
     assert len(summary.series_t) == 6
     assert summary.series_breaks == [True, False, False, True, False, False]
@@ -238,7 +238,7 @@ def test_zone_time():
     )
     s = compute_summary(Table(COLUMNS, rows), max_hr=200)
 
-    assert abs(sum(s.zone_seconds) - s.duration_s) < 1e-6
+    assert abs(sum(s.zone_seconds) - s.active_time_s) < 1e-6
     assert abs(sum(s.zone_seconds) - 30.0) < 1e-6
     assert abs(s.zone_seconds[0] - 10.0) < 1e-6
     assert abs(s.zone_seconds[2] - 10.0) < 1e-6
@@ -276,11 +276,11 @@ def test_zone_time_excludes_pause_and_tail():
     ]
     s = compute_summary(Table(COLUMNS, rows), max_hr=200)
 
-    assert len(s.laps) == 2, [(lap.start_s, lap.duration_s) for lap in s.laps]
+    assert len(s.laps) == 2, [(lap.start_s, lap.active_time_s) for lap in s.laps]
     # Zone total == moving time, not the 95 s recording span.
-    assert abs(sum(s.zone_seconds) - s.duration_s) < 1e-6, (
+    assert abs(sum(s.zone_seconds) - s.active_time_s) < 1e-6, (
         sum(s.zone_seconds),
-        s.duration_s,
+        s.active_time_s,
     )
     # The efforts (Z3) are counted; the pause (hr=165, Z4) and the cooldown
     # tail (hr=125, Z2) are not credited at all.
@@ -324,7 +324,7 @@ def test_hr_zone_percentages_include_missing_signal_time():
     summary = compute_summary(Table(COLUMNS, rows), max_hr=200)
     parts, total = _hr_zone_parts(summary)
 
-    assert total == summary.duration_s == 10.0
+    assert total == summary.active_time_s == 10.0
     assert sum(seconds for _name, seconds, _color in parts) == total
     assert parts[-1][0] == "No HR signal"
     assert parts[-1][1] == 5.0
@@ -390,11 +390,11 @@ def test_summary_excludes_inactive_heart_rate_tail():
     ]
     s = compute_summary(Table(COLUMNS, rows))
     assert len(s.laps) == 1
-    assert s.laps[0].duration_s == 20.0
+    assert s.laps[0].active_time_s == 20.0
     assert abs(s.laps[0].distance_m - frozen_dist) < 1e-6
     assert len(s.series_t) == 20
     assert s.series_t[-1] == 20.0
-    assert s.duration_s == 20.0
+    assert s.active_time_s == 20.0
 
 
 def test_chart_downsampling_preserves_extrema_and_breaks():

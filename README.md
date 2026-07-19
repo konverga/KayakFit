@@ -1,9 +1,9 @@
 # KayakFit
 
 KayakFit is a desktop app for logging **KayakFirst Bull** ergometer workouts. It
-connects over Bluetooth to your ergometer (and, optionally, a Garmin HRM‑Dual
-heart‑rate strap), shows a live metric dashboard while you paddle, and saves each
-session as a `.csv` and a `.fit` file — with one‑click upload to Strava.
+connects over Bluetooth to your ergometer and, optionally, a standard BLE
+heart-rate monitor. It shows a live metric dashboard while you paddle and saves
+each session as a `.csv` and a `.fit` file, with one-click upload to Strava.
 
 Runs on **macOS** and **Windows**.
 
@@ -26,8 +26,8 @@ Runs on **macOS** and **Windows**.
   speed, power, heart rate, cadence and pull force on one shared time axis
   (pick the metrics you want, hover for exact values), time in HR zones, and
   per‑lap splits.
-- **Estimated power** — the ergometer has no power sensor; KayakFit tries to reproduce
-  the machine display's power model
+- **Estimated power** — the ergometer has no power sensor; KayakFit reproduces
+  the machine display's power model.
 - **Strava upload** — convert to FIT and upload automatically or on demand. FIT
   records map active ergometer distance onto a fixed Hazewinkel course so
   Strava can infer pauses from stationary positions in its overview.
@@ -43,12 +43,12 @@ Runs on **macOS** and **Windows**.
 
 **Hardware**
 - A KayakFirst Bull ergometer (Bluetooth).
-- *(Optional)* A Garmin HRM‑Dual (or any standard BLE heart‑rate strap).
+- *(Optional)* Any standard BLE heart‑rate monitor.
 - A Mac or Windows PC with Bluetooth.
 
 **Software (to run from source or build)**
 - [uv](https://docs.astral.sh/uv/) — the dependency manager and runner.
-- **Python 3.14** (developed and built with **Python 3.14.5**). You don't
+- **Python 3.14**. You don't
   need to install Python yourself: `uv` fetches the right version for you.
 
 You don’t need Python or uv at all if you use a packaged build (see
@@ -108,7 +108,8 @@ Settings to remove it from the keychain.
 
 ## Recording a workout
 
-1. Set **Boat (kg)** and **Person (kg)** in the setup bar (used for power/pace).
+1. Set **Boat (kg)** and **Person (kg)** in the setup bar for the ergometer's
+   workout calculations.
 2. *(Optional)* Pick a **Program** from the dropdown, or leave it on
    *Free workout*.
 3. Click **Start workout** (or press the **spacebar**).
@@ -191,11 +192,11 @@ To add your own, drop a `.json` file like this into `~/KayakFit/programs/`:
 
 | Field | Values |
 |---|---|
-| `type` | `warmup` · `work` · `rest` · `cooldown` |
+| `type` | `warmup` · `work` · `effort` · `rest` · `cooldown` |
 | `duration.kind` | `time` (with `seconds`), `distance` (with `meters`), or `open` (advance manually) — the step advances when that time/distance is reached, or immediately when you press **Next step** for an open step |
 | `label` | *(optional)* overrides the auto‑generated step name (e.g. `"2 km TT"`) |
 | `target` | *(optional)* the intended intensity for the step — see below |
-| `repeat` | wraps a list of `steps` and repeats them N times |
+| `repeat` | wraps a list of `steps` and repeats them a positive whole-number of times |
 
 ### Targets (optional)
 
@@ -244,7 +245,7 @@ auto‑pauses. (Free workouts still fall back to auto‑pause laps.)
 | **Weight defaults** | Default boat and person weight, and **Max HR**. |
 | **Heart‑rate zones** | `auto` (derive zones from Max HR) or `manual` (set the five bpm bounds). |
 | **Display layout** | Which metrics the ergometer’s own screen shows. |
-| **Logging & processing** | Log interval/level, handshake mode, data points, auto‑upload, **sound cues** on program phase changes, and the **target grace** (seconds before the target badge changes). |
+| **Logging & processing** | Log interval/level, auto-upload, **sound cues** on program phase changes, and the **target grace** (seconds before the target badge changes). |
 | **Strava** | Connect/disconnect your Strava account. |
 
 ---
@@ -257,7 +258,7 @@ Everything lives under a **`KayakFit`** folder in your home directory
 ```
 KayakFit/
 ├── workouts/<year>/workout_YYYYMMDD_HHMMSS/
-│   ├── workout.csv                                # raw per-second data
+│   ├── workout.csv                                # raw sensor samples
 │   ├── metadata.json                              # recorded processing settings
 │   ├── steps.json                                 # planned workouts only
 │   └── activity.fit                               # created on save/upload

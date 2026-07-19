@@ -14,8 +14,8 @@ from app import recovery
 from app.atomic_json import write_atomic_json
 from app.ble_device import BleDevice
 from app.events import UiEvent
-from app.worker_result import WorkerResult
 from app.recording_timeline import RecordingTimeline
+from app.worker_result import WorkerResult
 from gui.config_manager import ConfigError, ConfigManager
 from gui.worker_manager import WorkerManager
 

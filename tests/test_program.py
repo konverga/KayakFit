@@ -262,28 +262,16 @@ def test_step_cap_enforced() -> None:
     print(f"  ok: {program.MAX_STEPS}-step cap enforced")
 
 
-def test_unknown_type_loads_but_logs() -> None:
-    # #3: a typo'd type still loads (usable) but is logged.
-    spec = {"name": "typo", "steps": [
-        {"type": "Restx", "duration": {"kind": "time", "seconds": 60}},
-    ]}
-    with _capture_program_logs(logging.WARNING) as recs:
-        prog = program.load_program(spec)
-    assert len(prog) == 1, "unknown type must not drop the step"
-    assert prog.steps[0].kind == "Restx", "type must not be silently rewritten"
-    assert any("Restx" in r.getMessage() for r in recs), "unknown type must be logged"
-    print("  ok: unknown step type loads but is logged")
-
-
-def test_case_only_type_not_flagged() -> None:
-    # #3: a mere case difference is fine (GUI lowercases) -> must NOT warn.
-    spec = {"name": "caps", "steps": [
-        {"type": "REST", "duration": {"kind": "time", "seconds": 60}},
-    ]}
-    with _capture_program_logs(logging.WARNING) as recs:
-        program.load_program(spec)
-    assert not recs, f"case-only type should not warn, got {[r.getMessage() for r in recs]}"
-    print("  ok: case-only type difference is not flagged")
+def test_unknown_and_noncanonical_step_types_are_rejected() -> None:
+    for step_type in ("Restx", "REST"):
+        spec = {"name": "bad type", "steps": [
+            {"type": step_type, "duration": {"kind": "time", "seconds": 60}},
+        ]}
+        try:
+            program.load_program(spec)
+        except program.ProgramError:
+            continue
+        raise AssertionError(f"step type {step_type!r} should be rejected")
 
 
 def test_bad_durations_rejected_cleanly() -> None:
@@ -303,6 +291,32 @@ def test_bad_durations_rejected_cleanly() -> None:
                                  "expected ProgramError") from e
         assert raised, f"duration {bad!r} should be rejected"
     print("  ok: negative/zero/non-numeric durations rejected cleanly")
+
+
+def test_duration_kinds_and_repeat_counts_are_strict() -> None:
+    bad_steps = [
+        {"type": "work", "duration": {"kind": "unknown"}},
+        {"type": "work"},
+    ]
+    for step in bad_steps:
+        try:
+            program.load_program({"name": "bad duration", "steps": [step]})
+        except program.ProgramError:
+            continue
+        raise AssertionError(f"step {step!r} should be rejected")
+
+    for repeat in (True, 1.5, 0, -1, "2"):
+        spec = {
+            "name": "bad repeat",
+            "steps": [{"repeat": repeat, "steps": [
+                {"type": "work", "duration": {"kind": "time", "seconds": 1}},
+            ]}],
+        }
+        try:
+            program.load_program(spec)
+        except program.ProgramError:
+            continue
+        raise AssertionError(f"repeat {repeat!r} should be rejected")
 
 
 def test_malformed_targets_are_rejected_at_load_time() -> None:
@@ -353,8 +367,8 @@ def test_bad_duration_skips_only_that_file_with_log() -> None:
 
 
 def test_bom_empty_and_invalid_json_logged() -> None:
-    # #5: BOM, empty-steps, missing-steps, and invalid JSON are skipped, but a
-    # log record is now emitted for each (empty/missing at INFO, others WARN).
+    # #5: BOM, empty-steps, missing-steps, and invalid JSON are skipped and
+    # logged. Only a schema-valid empty program is informational.
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         _write(d, "bom.json",
@@ -371,14 +385,29 @@ def test_bom_empty_and_invalid_json_logged() -> None:
         assert any("empty.json" in m for m in msgs), "empty-steps skip must be logged"
         assert any("nosteps.json" in m for m in msgs), "missing-steps skip must be logged"
         assert any("invalid.json" in m for m in msgs), "invalid JSON skip must be logged"
-        # empty/missing are INFO (nothing to run), not WARNING failures.
+        # Empty is valid but non-runnable; missing steps violates the schema.
         empty_rec = next(r for r in recs if "empty.json" in r.getMessage())
         assert empty_rec.levelno == logging.INFO, "empty program is INFO, not a failure"
-    print("  ok: BOM/empty/missing/invalid-JSON all skipped and logged (distinctly)")
+        missing_rec = next(r for r in recs if "nosteps.json" in r.getMessage())
+        assert missing_rec.levelno == logging.WARNING
+    print("  ok: malformed and non-runnable programs are logged distinctly")
 
 
-def test_duplicate_name_warns() -> None:
-    # #6: two files with the same "name" -> a shadowing warning naming both.
+def test_empty_program_cannot_bypass_exact_top_level_schema() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _write(
+            directory,
+            "extra.json",
+            '{"name": "empty", "steps": [], "unsupported": true}',
+        )
+        warnings: list[str] = []
+        assert program._load_programs_from(directory, warnings) == []
+        assert len(warnings) == 1
+        assert "exactly 'name' and 'steps'" in warnings[0]
+
+
+def test_duplicate_names_keep_distinct_file_identifiers() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         _write(d, "a.json",
@@ -387,9 +416,7 @@ def test_duplicate_name_warns() -> None:
         _write(d, "b.json",
                '{"name": "Dup", "steps": [{"type": "rest", '
                '"duration": {"kind": "time", "seconds": 30}}]}')
-        with _capture_program_logs(logging.WARNING) as recs:
-            progs = program._load_programs_from(d)
+        progs = program._load_programs_from(d)
         assert len(progs) == 2, "both duplicate-named programs still load"
-        assert any("duplicate" in r.getMessage().lower() for r in recs), \
-            "a duplicate-name warning must be logged"
-    print("  ok: duplicate program name logs a shadowing warning")
+        assert [item.identifier for item in progs] == ["a.json", "b.json"]
+        assert [item.name for item in progs] == ["Dup", "Dup"]

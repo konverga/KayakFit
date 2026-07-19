@@ -6,29 +6,8 @@ and reused by any front end.
 
 from typing import Any
 
+from app import stats
 from app.power import estimate_power
-
-# Zone bounds moved to app.stats (the shared single source of truth, so
-# app.summary no longer needs to import gui code); re-exported here for the
-# existing GUI callers and tests.
-from app.stats import ZONE_FRACTIONS, zone_lower_bounds
-
-__all__ = [
-    "ZONE_FRACTIONS",
-    "compute_power",
-    "fmt_metres",
-    "fmt_time",
-    "fmt_time_precise",
-    "format_metrics",
-    "format_pace",
-    "hr_zone",
-    "metric_value",
-    "target_status",
-    "target_text",
-    "target_value",
-    "zone_lower_bounds",
-    "zone_range",
-]
 
 
 def fmt_time(seconds: Any) -> str:
@@ -78,7 +57,7 @@ def hr_zone(hr: Any, max_hr: Any = 185, zones: list[int] | None = None) -> int:
         value = float(hr)
     except (TypeError, ValueError):
         return -1
-    bounds = zone_lower_bounds(max_hr=max_hr, zones=zones)
+    bounds = stats.zone_lower_bounds(max_hr=max_hr, zones=zones)
     zone = 0
     for i, lower in enumerate(bounds):
         if value >= lower:
@@ -92,7 +71,7 @@ def zone_range(
     """Return the (min_bpm, max_bpm) range for a zone (max is None for Z5)."""
     if not 0 <= zone <= 4:
         return (None, None)
-    bounds = zone_lower_bounds(max_hr=max_hr, zones=zones)
+    bounds = stats.zone_lower_bounds(max_hr=max_hr, zones=zones)
     low = bounds[zone]
     high = bounds[zone + 1] - 1 if zone < 4 else None
     return (low, high)
@@ -152,7 +131,7 @@ def metric_value(
 def format_metrics(
     data: dict[str, Any], pull_length_m: Any = 0.623
 ) -> dict[str, str]:
-    """Map a raw per-second data dict to display strings keyed by tile id."""
+    """Map a raw sensor-sample dictionary to display strings keyed by tile id."""
     out: dict[str, str] = {}
     if data.get("session_elapsed__s") is not None:
         out["time"] = fmt_time(data["session_elapsed__s"])

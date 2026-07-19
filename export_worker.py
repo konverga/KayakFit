@@ -72,7 +72,7 @@ def run_export_worker(
     # Convert CSV to FIT first (needed for both the save-only and upload paths).
     if not is_fit_file:
         log("Converting CSV to FIT...")
-        convert_result = FitExporter.convert_csv_to_fit(file_path, cfg)
+        convert_result = FitExporter.convert_csv_to_fit(file_path)
         if not convert_result.get("success"):
             log(f"✗ Conversion failed: {convert_result.get('message')}")
             return WorkerResult(

@@ -190,12 +190,12 @@ epoch time is used only for recorded timestamps.
 
 ## Raw CSV model
 
-`app.write_csv.CsvWriter` writes every field from `app.field_mapping.ALL_FIELDS`
+`app.write_csv.CsvWriter` writes every field from `app.field_mapping.CSV_COLUMNS`
 using a semicolon delimiter. It does not decide which records count as activity.
 
 `app.read_csv.CsvReader`:
 
-- requires the exact unreleased v1 schema;
+- requires the exact v1 schema;
 - parses values defensively;
 - skips individually corrupt/truncated rows;
 - rejects a predominantly corrupt file;

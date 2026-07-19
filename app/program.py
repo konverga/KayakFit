@@ -26,10 +26,7 @@ TIME = "time"
 DISTANCE = "distance"
 OPEN = "open"  # advance manually (lap / stop button)
 
-# Step kinds the GUI knows how to colour and sound-cue (mirrors the keys of
-# STEP_KIND_COLORS / STEP_KIND_CUES in gui/main_gui.py). Anything else still
-# loads but falls back to a generic tile colour / "phase" cue, so we log a
-# warning to make an authoring typo (e.g. "Restx") discoverable.
+# Step kinds the GUI knows how to colour and sound-cue.
 KNOWN_KINDS = frozenset({"warmup", "work", "effort", "rest", "cooldown"})
 KNOWN_TARGET_METRICS = frozenset(
     {"hr_zone", "pace_200", "pace_500", "pace_1000", "power", "spm"}
@@ -53,12 +50,7 @@ _MAX_REPEAT_DEPTH = 200
 
 
 class ProgramError(ValueError):
-    """A program spec is structurally invalid or unsafe to load.
-
-    Subclasses ``ValueError`` so existing best-effort ``except (OSError,
-    ValueError, ...)`` call sites keep skipping the offending file, while the
-    message carries a human-readable reason we can log.
-    """
+    """A program specification is structurally invalid or unsafe to load."""
 
 
 @dataclass
@@ -80,6 +72,7 @@ class Step:
 class Program:
     """A named, flattened sequence of steps."""
 
+    identifier: str
     name: str
     steps: list[Step] = field(default_factory=list)
 
@@ -108,9 +101,7 @@ def _validate_duration_value(raw: Any, field_name: str) -> float:
 
     Raises ``ProgramError`` (never lets an unvalidated value reach label
     generation) for missing, non-numeric, non-finite, or non-positive values —
-    e.g. ``"seconds": -30`` (would render as ``-1:30``), ``0`` (a degenerate
-    zero-length step), ``"abc"`` or ``[30]`` (previously crashed inside
-    ``_fmt_time``'s ``int()`` before the ``float()`` cast could catch them).
+    e.g. ``"seconds": -30``, ``0``, ``"abc"`` or ``[30]``.
     """
     if raw is None:
         raise ProgramError(f"'{field_name}' is required for this step")
@@ -125,43 +116,41 @@ def _validate_duration_value(raw: Any, field_name: str) -> float:
     return value
 
 
-def _warn_unknown_kind(kind: str, source: str) -> None:
-    """Log (once per step) when a step ``type`` matches no known kind.
-
-    Compared case-insensitively to mirror the GUI's ``.lower()`` lookup, so a
-    mere case difference (``"REST"``) is *not* flagged — only strings that map
-    to no known kind at all (a typo like ``"Restx"``), which would silently get
-    the generic colour/cue.
-    """
-    if kind.lower() not in KNOWN_KINDS:
-        logger.warning(
-            "Program %r: unrecognized step type %r (known: %s) — "
-            "it will use the generic tile colour and sound cue.",
-            source, kind, ", ".join(sorted(KNOWN_KINDS)),
-        )
-
-
-def _make_step(item: dict[str, Any], source: str = "Program") -> Step:
-    duration = item.get("duration", {})
-    if duration is None:
-        duration = {}
+def _make_step(item: dict[str, Any]) -> Step:
+    allowed = {"type", "label", "duration", "target"}
+    unknown = sorted(set(item) - allowed)
+    if unknown:
+        raise ProgramError(f"unsupported step fields: {unknown}")
+    duration = item.get("duration")
     if not isinstance(duration, dict):
-        raise ProgramError(f"'duration' must be an object, not {type(duration).__name__}")
-    kind = duration.get("kind", OPEN)
+        raise ProgramError("step 'duration' must be an object")
+    kind = duration.get("kind")
     if kind == TIME:
+        if set(duration) != {"kind", "seconds"}:
+            raise ProgramError("time duration requires only 'kind' and 'seconds'")
         value: float | None = _validate_duration_value(duration.get("seconds"), "seconds")
     elif kind == DISTANCE:
+        if set(duration) != {"kind", "meters"}:
+            raise ProgramError("distance duration requires only 'kind' and 'meters'")
         value = _validate_duration_value(duration.get("meters"), "meters")
-    else:
-        kind = OPEN
+    elif kind == OPEN:
+        if set(duration) != {"kind"}:
+            raise ProgramError("open duration accepts only the 'kind' field")
         value = None
-    step_type = item.get("type", "effort")
-    if not isinstance(step_type, str):
-        raise ProgramError(f"step 'type' must be text, got {type(step_type).__name__}")
-    # Unknown kinds are kept (a typo'd rest step should still be usable) but
-    # logged, rather than silently rewritten or rejected.
-    _warn_unknown_kind(step_type, source)
-    label = item.get("label") or _default_label(step_type, kind, value)
+    else:
+        raise ProgramError(f"unsupported duration kind {kind!r}")
+    step_type = item.get("type")
+    if step_type not in KNOWN_KINDS:
+        raise ProgramError(
+            f"unsupported step type {step_type!r}; expected one of "
+            f"{sorted(KNOWN_KINDS)}"
+        )
+    raw_label = item.get("label")
+    if raw_label is not None and (not isinstance(raw_label, str) or not raw_label.strip()):
+        raise ProgramError("step 'label' must be non-empty text")
+    label = raw_label.strip() if isinstance(raw_label, str) else _default_label(
+        step_type, kind, value
+    )
     target = _validate_target(item.get("target"))
     return Step(
         label=str(label),
@@ -178,6 +167,8 @@ def _validate_target(raw: Any) -> dict[str, Any] | None:
         return None
     if not isinstance(raw, dict):
         raise ProgramError("step 'target' must be an object")
+    if set(raw) != {"metric", "low", "high"}:
+        raise ProgramError("target requires exactly 'metric', 'low', and 'high'")
     metric = raw.get("metric")
     if metric not in KNOWN_TARGET_METRICS:
         raise ProgramError(f"unsupported target metric {metric!r}")
@@ -203,7 +194,6 @@ def _validate_target(raw: Any) -> dict[str, Any] | None:
 def _flatten(
     items: Any,
     out: list[Step],
-    source: str = "Program",
     budget: list[int] | None = None,
     depth: int = 0,
 ) -> None:
@@ -233,35 +223,37 @@ def _flatten(
         if not isinstance(item, dict):
             raise ProgramError(f"each step must be an object, not {type(item).__name__}")
         if "repeat" in item:
+            if set(item) != {"repeat", "steps"}:
+                raise ProgramError("repeat blocks require exactly 'repeat' and 'steps'")
             raw = item["repeat"]
-            try:
-                count = max(int(raw), 0)
-            except (TypeError, ValueError) as e:
-                raise ProgramError(
-                    f"'repeat' must be a whole number, got {raw!r}"
-                ) from e
-            nested = item.get("steps", [])
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+                raise ProgramError(f"'repeat' must be a positive whole number, got {raw!r}")
+            count = raw
+            nested = item["steps"]
             for _ in range(count):
-                _flatten(nested, out, source, budget, depth + 1)
+                _flatten(nested, out, budget, depth + 1)
         else:
             if len(out) >= MAX_STEPS:
                 raise ProgramError(f"program exceeds the {MAX_STEPS}-step limit")
-            out.append(_make_step(item, source))
+            out.append(_make_step(item))
 
 
 def load_program(spec: dict[str, Any], source: str | None = None) -> Program:
     """Build a Program from a specification dict (flattening repeat blocks).
 
-    ``source`` (a filename, if known) only sharpens log messages. Raises
-    ``ProgramError`` for a structurally invalid or unsafe spec.
+    ``source`` supplies the stable file identifier when loading from disk.
+    Raises ``ProgramError`` for a structurally invalid or unsafe spec.
     """
     if not isinstance(spec, dict):
         raise ProgramError(f"program spec must be an object, not {type(spec).__name__}")
-    name = spec.get("name", "Program")
-    src = source or (name if isinstance(name, str) else "Program")
+    if set(spec) != {"name", "steps"}:
+        raise ProgramError("program requires exactly 'name' and 'steps'")
+    name = spec.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ProgramError("program 'name' must be non-empty text")
     steps: list[Step] = []
-    _flatten(spec.get("steps", []), steps, src, budget=[0], depth=0)
-    return Program(name=str(name), steps=steps)
+    _flatten(spec.get("steps", []), steps, budget=[0], depth=0)
+    return Program(identifier=source or name, name=name.strip(), steps=steps)
 
 
 # --------------------------------------------------------------------------- #
@@ -341,7 +333,6 @@ def _load_programs_from(
     out: list[Program] = []
     if not directory.exists():
         return out
-    seen_names: dict[str, str] = {}
     for path in sorted(directory.glob("*.json")):
         # NOTE: encoding="utf-8" (not utf-8-sig) is deliberate — a UTF-8 BOM
         # (common from Notepad) makes json.load raise, so such a file is
@@ -359,22 +350,6 @@ def _load_programs_from(
             _record_skip(warnings, path, "top-level JSON is not an object")
             continue
 
-        # Distinguish "no steps to run" from "failed to load". An explicit
-        # empty (or missing) step list is a syntactically fine but non-runnable
-        # program: there is nothing to do, so it is not added to the list, but
-        # it is logged at INFO — clearly *not* the same as a parse/validation
-        # error. Anything else falsy under "steps" (e.g. 0, "") is malformed.
-        steps_spec = spec.get("steps")
-        if not steps_spec:
-            if "steps" not in spec or steps_spec == []:
-                logger.info(
-                    "Program %s has no steps; skipping (nothing to run).", path.name
-                )
-            else:
-                _record_skip(warnings, path, "'steps' is empty or not a list")
-            continue
-
-        spec.setdefault("name", path.stem)
         try:
             prog = load_program(spec, source=path.name)
         except ProgramError as exc:
@@ -388,19 +363,11 @@ def _load_programs_from(
             _record_skip(warnings, path, f"failed to load ({type(exc).__name__}: {exc})")
             continue
 
-        # Duplicate program names silently shadow one another in the GUI's
-        # name-keyed dict, so warn (naming both files) when one is detected.
-        prior = seen_names.get(prog.name)
-        if prior is not None:
-            logger.warning(
-                "Program name %r in %s duplicates %s; one will shadow the "
-                "other in the menu.", prog.name, path.name, prior,
+        if not prog.steps:
+            logger.info(
+                "Program %s has no steps; skipping (nothing to run).", path.name
             )
-            if warnings is not None:
-                warnings.append(
-                    f"{path.name}: duplicate name {prog.name!r} (also in {prior})"
-                )
-        seen_names[prog.name] = path.name
+            continue
         out.append(prog)
     return out
 
@@ -422,6 +389,6 @@ def list_programs(warnings: list[str] | None = None) -> list[Program]:
     copied there once (``install_examples``), alongside user-authored plans.
 
     Pass a list as ``warnings`` to collect one human-readable string per
-    skipped/shadowed file (the same reasons are always logged regardless).
+    skipped file; the same reasons are always logged.
     """
     return user_programs(warnings)

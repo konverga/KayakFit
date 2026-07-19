@@ -33,19 +33,16 @@ class CsvReadError(Exception):
 class CsvReader:
     """Read workout data from CSV files with semicolon separator."""
 
-    def __init__(self, file_path: str, config: dict[str, Any]) -> None:
+    def __init__(self, file_path: str) -> None:
         """Initialize reader with path to CSV file.
 
         Args:
             file_path: Path to the CSV file to read.
-            config: Configuration dictionary.
 
         Raises:
             FileNotFoundError: If CSV file does not exist.
         """
         self.file_path = Path(file_path)
-        self.config = config
-
         if not self.file_path.exists():
             raise FileNotFoundError(f"CSV file not found: {file_path}")
 
@@ -71,21 +68,21 @@ class CsvReader:
         # be identified locally and adjacently during capture rather than by a
         # global value-based pass over the canonical recording.
 
-        key_map: dict[str, tuple[str, ...]] = {
-            "timestamp": ("timestamp",),
-            "session_elapsed__s": ("session_elapsed",),
-            "sample_duration__s": ("sample_duration",),
-            "elapsed_time__s": ("device_elapsed",),
-            "window_size__s": ("device_window",),
-            "kayakfirst_timestamp": ("kayakfirst_timestamp",),
-            "heart_rate__bpm": ("heart_rate",),
-            "cadence__spm": ("cadence",),
-            "cadence_instant__spm": ("cadence_instant",),
-            "distance__m": ("distance",),
-            "speed_instant__mps": ("speed_instant",),
-            "pull_force__n": ("pull_force",),
-            "pull_force_instant__n": ("pull_force_instant",),
-            "active_paddling": ("active",),
+        key_map: dict[str, str] = {
+            "timestamp": "timestamp",
+            "session_elapsed__s": "session_elapsed",
+            "sample_duration__s": "sample_duration",
+            "elapsed_time__s": "device_elapsed",
+            "window_size__s": "device_window",
+            "kayakfirst_timestamp": "kayakfirst_timestamp",
+            "heart_rate__bpm": "heart_rate",
+            "cadence__spm": "cadence",
+            "cadence_instant__spm": "cadence_instant",
+            "distance__m": "distance",
+            "speed_instant__mps": "speed_instant",
+            "pull_force__n": "pull_force",
+            "pull_force_instant__n": "pull_force_instant",
+            "active_paddling": "active",
         }
 
         out_columns = [
@@ -98,7 +95,7 @@ class CsvReader:
         return Table(out_columns, out_rows)
 
     def _read_rows(
-        self, key_map: dict[str, tuple[str, ...]]
+        self, key_map: dict[str, str]
     ) -> list[dict[str, Any]]:
         """Stream the CSV into the reduced typed rows used by processing."""
         try:
@@ -133,13 +130,10 @@ class CsvReader:
                     record: dict[str, Any] = {}
                     try:
                         for col, value in zip(header, raw, strict=True):
-                            destinations = key_map.get(col)
-                            if destinations is None:
+                            destination = key_map.get(col)
+                            if destination is None:
                                 continue
-                            kind = COLUMN_TYPES.get(col)
-                            typed = value if kind is None else parse_value(value, kind)
-                            for destination in destinations:
-                                record[destination] = typed
+                            record[destination] = parse_value(value, COLUMN_TYPES[col])
                     except (ValueError, ArithmeticError) as e:
                         corrupt_skipped += 1
                         self.logger.warning(

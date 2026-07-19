@@ -33,7 +33,7 @@ from app.export_fit import (
     FitExporter,
     _synthetic_gps_position,
 )
-from app.field_mapping import ALL_FIELDS
+from app.field_mapping import CSV_COLUMNS
 from app.read_csv import CsvReader, CsvReadError
 from app.summary import compute_summary
 from app.table import Table
@@ -50,7 +50,7 @@ CONFIG = {
 
 
 def test_recorded_free_workout_golden_metrics() -> None:
-    """Reproduce workout_20260717_210142 from its recorded data points."""
+    """Verify free-workout timing and distance against a fixed sensor sample set."""
     elapsed_groups = [
         list(range(1, 18)),
         [18, 20, 21, 22, 23, 24],
@@ -103,7 +103,7 @@ def test_recorded_free_workout_golden_metrics() -> None:
             )
             previous_end_s = end_s
     columns = list(rows[0])
-    summary = compute_summary(Table(columns, rows), config=CONFIG)
+    summary = compute_summary(Table(columns, rows), pull_length_m=CONFIG["pull_length_m"])
 
     assert summary.active_time_s == 39.0
     assert summary.elapsed_time_s == 62.0
@@ -142,7 +142,9 @@ def test_canonical_fields_own_intervals() -> None:
         )
     ]
 
-    summary = compute_summary(Table(list(rows[0]), rows), config=CONFIG)
+    summary = compute_summary(
+        Table(list(rows[0]), rows), pull_length_m=CONFIG["pull_length_m"]
+    )
 
     assert summary.elapsed_time_s == 6.0
     assert summary.active_time_s == 4.0
@@ -180,7 +182,7 @@ def _row(i: int) -> dict[str, Any]:
 
 
 def _write_csv(path: Path, rows: int, header: bool = True, full_schema: bool = True) -> None:
-    fields = ALL_FIELDS if full_schema else ALL_FIELDS[:5]
+    fields = CSV_COLUMNS if full_schema else CSV_COLUMNS[:5]
     lines = []
     if header:
         lines.append(";".join(fields))
@@ -195,7 +197,7 @@ def test_csv_to_fit_produces_file() -> None:
     with tempfile.TemporaryDirectory() as d:
         csv_path = Path(d) / "workout.csv"
         _write_csv(csv_path, rows=120)
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], f"conversion failed: {result.get('message')}"
         fit_path = Path(result["file_path"])
         assert fit_path.exists(), "FIT file was not created"
@@ -239,14 +241,16 @@ def test_decoded_fit_exactly_matches_summary() -> None:
                 row["cadence__spm"] = row["cadence_instant__spm"] = 0
                 row["pull_force__n"] = row["pull_force_instant__n"] = 0
                 row["heart_rate__bpm"] = 200
-        _write_cols = [";".join(ALL_FIELDS)]
-        _write_cols.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        _write_cols = [";".join(CSV_COLUMNS)]
+        _write_cols.extend(
+            ";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows
+        )
         csv_path.write_text("\n".join(_write_cols) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all()
-        summary = compute_summary(table, config=CONFIG)
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        table = CsvReader(str(csv_path)).read_all()
+        summary = compute_summary(table, pull_length_m=CONFIG["pull_length_m"])
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], result
         fit_path = Path(result["file_path"])
         session = _fit_data_messages(fit_path, "session")[0]
@@ -261,13 +265,13 @@ def test_decoded_fit_exactly_matches_summary() -> None:
         )
 
         assert session["total_distance"] == summary.distance_m == 22.0
-        assert session["total_timer_time"] == summary.duration_s == 5.0
+        assert session["total_timer_time"] == summary.active_time_s == 5.0
         assert session["total_elapsed_time"] == summary.elapsed_time_s == 10.0
         assert summary.pause_time_s == 5.0
         assert sum(
             lap.elapsed_time_s + lap.pause_after_s for lap in summary.laps
         ) == summary.elapsed_time_s
-        assert activity["total_timer_time"] == summary.duration_s
+        assert activity["total_timer_time"] == summary.active_time_s
         assert activity["num_sessions"] == 1
         assert activity["type"] == Activity.MANUAL.value
         assert activity["event"] == Event.ACTIVITY.value
@@ -322,7 +326,7 @@ def test_decoded_fit_exactly_matches_summary() -> None:
             item.distance_m for item in summary.laps
         ]
         assert [lap["total_timer_time"] for lap in laps] == [
-            item.duration_s for item in summary.laps
+            item.active_time_s for item in summary.laps
         ]
         assert [lap["avg_heart_rate"] for lap in laps] == [
             item.avg_hr for item in summary.laps
@@ -351,14 +355,14 @@ def test_speed_statistics_and_fit_records_use_instantaneous_sensor() -> None:
             row["speed__mps"] = "3.00"
             row["speed_instant__mps"] = "9.00" if i == 7 else "3.00"
             rows.append(row)
-        lines = [";".join(ALL_FIELDS)]
-        lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        lines = [";".join(CSV_COLUMNS)]
+        lines.extend(";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, config, "free")
 
-        table = CsvReader(str(csv_path), config).read_all()
-        summary = compute_summary(table, config=config)
-        result = FitExporter.convert_csv_to_fit(str(csv_path), config)
+        table = CsvReader(str(csv_path)).read_all()
+        summary = compute_summary(table, pull_length_m=config["pull_length_m"])
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], result
 
         session = _fit_data_messages(Path(result["file_path"]), "session")[0]
@@ -392,16 +396,16 @@ def test_instant_metrics_and_averaged_power_use_separate_channels() -> None:
             row["pull_force__n"] = 100
             row["pull_force_instant__n"] = 200 + i * 50
             rows.append(row)
-        lines = [";".join(ALL_FIELDS)]
+        lines = [";".join(CSV_COLUMNS)]
         lines.extend(
-            ";".join(str(row[field]) for field in ALL_FIELDS) for row in rows
+            ";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows
         )
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all()
-        summary = compute_summary(table, config=CONFIG)
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        table = CsvReader(str(csv_path)).read_all()
+        summary = compute_summary(table, pull_length_m=CONFIG["pull_length_m"])
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], result
 
         records = _fit_data_messages(Path(result["file_path"]), "record")
@@ -436,14 +440,14 @@ def test_resumed_distance_jump_is_preserved_consistently() -> None:
             if i >= 4:
                 row["timestamp"] = int(row["timestamp"]) + 6000
                 row["session_elapsed__s"] = int(row["session_elapsed__s"]) + 6
-        lines = [";".join(ALL_FIELDS)]
-        lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        lines = [";".join(CSV_COLUMNS)]
+        lines.extend(";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all()
-        summary = compute_summary(table, config=CONFIG)
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        table = CsvReader(str(csv_path)).read_all()
+        summary = compute_summary(table, pull_length_m=CONFIG["pull_length_m"])
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], result
         fit_path = Path(result["file_path"])
         laps = _fit_data_messages(fit_path, "lap")
@@ -479,21 +483,21 @@ def test_active_signal_excludes_heart_rate_prefix_and_tail() -> None:
                 row["pull_force__n"] = row["pull_force_instant__n"] = 0
         # Raw device timing is diagnostic and cannot change canonical timing.
         rows[3]["window_size__s"] = 2
-        lines = [";".join(ALL_FIELDS)]
-        lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        lines = [";".join(CSV_COLUMNS)]
+        lines.extend(";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         save_workout_metadata(csv_path, CONFIG, "free")
 
-        table = CsvReader(str(csv_path), CONFIG).read_all()
-        summary = compute_summary(table, config=CONFIG)
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        table = CsvReader(str(csv_path)).read_all()
+        summary = compute_summary(table, pull_length_m=CONFIG["pull_length_m"])
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], result
         fit_path = Path(result["file_path"])
         session = _fit_data_messages(fit_path, "session")[0]
         records = _fit_data_messages(fit_path, "record")
         sensor_records = [record for record in records if "heart_rate" in record]
 
-        assert summary.duration_s == session["total_timer_time"] == 3.0
+        assert summary.active_time_s == session["total_timer_time"] == 3.0
         assert summary.elapsed_time_s == session["total_elapsed_time"] == 7.0
         assert summary.series_hr == [120.0, 125.0, 130.0]
         assert summary.series_t[0] == 3.0
@@ -519,10 +523,10 @@ def test_decoded_planned_laps_match_active_only_step_summary() -> None:
                 row["cadence__spm"] = row["cadence_instant__spm"] = 0
                 row["pull_force__n"] = row["pull_force_instant__n"] = 0
         csv_path = Path(d) / "planned.csv"
-        lines = [";".join(ALL_FIELDS)]
-        lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        lines = [";".join(CSV_COLUMNS)]
+        lines.extend(";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        table = CsvReader(str(csv_path), CONFIG).read_all()
+        table = CsvReader(str(csv_path)).read_all()
         steps = [
             {
                 "index": 0,
@@ -546,16 +550,20 @@ def test_decoded_planned_laps_match_active_only_step_summary() -> None:
                 "end_elapsed_s": 15,
             },
         ]
-        summary = compute_summary(table, program_steps=steps, config=CONFIG)
-        assert FitExporter(CONFIG).export(table, str(fit_path), program_steps=steps)
+        summary = compute_summary(
+            table, program_steps=steps, pull_length_m=CONFIG["pull_length_m"]
+        )
+        assert FitExporter(CONFIG["pull_length_m"]).export(
+            table, str(fit_path), program_steps=steps
+        )
         laps = _fit_data_messages(fit_path, "lap")
 
         assert len(laps) == len(summary.laps) == 3
         assert [lap["total_timer_time"] for lap in laps] == [
-            item.duration_s for item in summary.laps
+            item.active_time_s for item in summary.laps
         ]
         assert [lap["total_elapsed_time"] for lap in laps] == [
-            item.elapsed_s for item in summary.laps
+            item.elapsed_time_s for item in summary.laps
         ]
         assert [lap["total_distance"] for lap in laps] == [
             item.distance_m for item in summary.laps
@@ -566,7 +574,7 @@ def test_decoded_planned_laps_match_active_only_step_summary() -> None:
         assert [lap.get("avg_speed") for lap in laps] == [
             item.avg_speed_mps for item in summary.laps
         ]
-        assert summary.laps[1].duration_s == 0.0
+        assert summary.laps[1].active_time_s == 0.0
         assert summary.laps[1].avg_hr is None
         assert summary.max_hr != 200
 
@@ -621,7 +629,7 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
 
     with tempfile.TemporaryDirectory() as directory:
         fit_path = Path(directory) / "long.fit"
-        assert FitExporter(CONFIG).export(table, str(fit_path))
+        assert FitExporter(CONFIG["pull_length_m"]).export(table, str(fit_path))
         session = _fit_data_messages(fit_path, "session")[0]
         activity = _fit_data_messages(fit_path, "activity")[0]
         laps = _fit_data_messages(fit_path, "lap")
@@ -633,16 +641,15 @@ def test_export_accepts_a_workout_longer_than_72_minutes() -> None:
 
 
 def test_export_uses_recorded_processing_config() -> None:
-    """Historical FIT generation must not change with the current app config."""
+    """FIT generation reads power calibration from recorded metadata."""
     with tempfile.TemporaryDirectory() as d:
         csv_path = Path(d) / "snapshot.csv"
         _write_csv(csv_path, rows=10)
         recorded = {**CONFIG, "pull_length_m": 0.8}
         save_workout_metadata(csv_path, recorded, "free")
 
-        current = {**CONFIG, "pull_length_m": 0.4}
         assert load_workout_config(csv_path)["pull_length_m"] == 0.8
-        result = FitExporter.convert_csv_to_fit(str(csv_path), current)
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert result["success"], result
         session = _fit_data_messages(Path(result["file_path"]), "session")[0]
         # 200 N * 0.8 m * 80 spm / 60 = 213.33 -> estimate_power rounds to 213 W.
@@ -669,7 +676,7 @@ def test_failed_export_preserves_existing_fit() -> None:
         fit_path = WorkoutPaths.from_csv(csv_path).fit
         _write_csv(csv_path, rows=10)
         fit_path.write_bytes(b"previous-valid-fit")
-        table = CsvReader(str(csv_path), CONFIG).read_all()
+        table = CsvReader(str(csv_path)).read_all()
 
         class _FailingFit:
             def to_file(self, path: str) -> None:
@@ -686,7 +693,7 @@ def test_failed_export_preserves_existing_fit() -> None:
                 return _FailingFit()
 
         with patch("app.export_fit.FitFileBuilder", _Builder):
-            success = FitExporter(CONFIG).export(
+            success = FitExporter(CONFIG["pull_length_m"]).export(
                 table,
                 str(fit_path),
             )
@@ -702,10 +709,10 @@ def test_stationary_recording_does_not_become_activity() -> None:
             row["distance__m"] = "0.00"
             row["speed__mps"] = row["speed_instant__mps"] = "0.00"
             row["active_paddling"] = 0
-        lines = [";".join(ALL_FIELDS)]
-        lines.extend(";".join(str(row[field]) for field in ALL_FIELDS) for row in rows)
+        lines = [";".join(CSV_COLUMNS)]
+        lines.extend(";".join(str(row[field]) for field in CSV_COLUMNS) for row in rows)
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert not result["success"]
         assert not WorkoutPaths.from_csv(csv_path).fit.exists()
 
@@ -716,7 +723,7 @@ def test_malformed_csv_fails_gracefully() -> None:
         _write_csv(csv_path, rows=10, full_schema=False)  # missing columns
         # Direct reader call should raise the typed error (not SystemExit).
         try:
-            CsvReader(str(csv_path), CONFIG).read_all()
+            CsvReader(str(csv_path)).read_all()
             raised = False
         except CsvReadError:
             raised = True
@@ -725,7 +732,7 @@ def test_malformed_csv_fails_gracefully() -> None:
         assert raised, "expected CsvReadError for malformed CSV"
 
         # And the public conversion API turns it into a clean failure result.
-        result = FitExporter.convert_csv_to_fit(str(csv_path), CONFIG)
+        result = FitExporter.convert_csv_to_fit(str(csv_path))
         assert not result["success"]
         print(f"  ok: malformed CSV handled -> {result.get('message')!r}")
 

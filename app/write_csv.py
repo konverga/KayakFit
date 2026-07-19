@@ -15,7 +15,7 @@ import stat
 import time
 from typing import Any
 
-from .field_mapping import ALL_FIELDS
+from .field_mapping import CSV_COLUMNS
 from .logger import Logger
 
 # Force data to physical disk at most this often (seconds). flush() pushes to
@@ -31,15 +31,13 @@ class CsvWriteError(OSError):
 class CsvWriter:
     """Writer for workout data in CSV format with semicolon separator."""
 
-    def __init__(self, output_path: str, config: dict[str, Any]) -> None:
+    def __init__(self, output_path: str) -> None:
         """Initialize CSV writer.
 
         Args:
             output_path: Path to output .csv file.
-            config: Configuration dictionary.
         """
         self.output_path = output_path
-        self.config = config
         self.file: Any | None = None
         self.writer: csv.DictWriter[str] | None = None
         self._last_fsync = 0.0
@@ -62,7 +60,7 @@ class CsvWriter:
             )
             self.writer = csv.DictWriter(
                 f=self.file,
-                fieldnames=ALL_FIELDS,
+                fieldnames=CSV_COLUMNS,
                 delimiter=";",
                 extrasaction="ignore"
             )
@@ -94,7 +92,7 @@ class CsvWriter:
             raise CsvWriteError("CSV writer is not initialized")
 
         try:
-            record = {field: data.get(field) for field in ALL_FIELDS}
+            record = {field: data.get(field) for field in CSV_COLUMNS}
             self.writer.writerow(rowdict=record)
             # Flush each record so an unexpected shutdown does not lose data...
             self.file.flush()

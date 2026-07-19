@@ -31,8 +31,13 @@ class StatusPayload(TypedDict, total=False):
     next_label: str | None
     done: bool
     csv_path: str
-    points: int
+    distance_m: float
+    active_time_s: float
+    elapsed_time_s: float
+    pause_time_s: float
+    record_count: int
     incomplete: bool
+    persistence_error: str | None
 
 
 class UiEvent(TypedDict, total=False):
@@ -72,5 +77,10 @@ class UiEvent(TypedDict, total=False):
     new_refresh_token: str | None
     success: bool
     pending: bool
-    points: int
+    distance_m: float
+    active_time_s: float
+    elapsed_time_s: float
+    pause_time_s: float
+    record_count: int
     incomplete: bool
+    persistence_error: str | None

@@ -43,10 +43,6 @@ hand.
 - Before handing off a behavioral change, update `FEATURES.md`, `ROADMAP.md`,
   `DECISIONS.md`, or `ARCHITECTURE.md` as appropriate.
 
-The current feature branch introduced the shared FIT/summary processing model.
-Its rationale has been consolidated into [DECISIONS.md](DECISIONS.md), and the
-remaining audit findings are in [ROADMAP.md](ROADMAP.md).
-
 ## Build, run, and validate
 
 ```bash
@@ -59,9 +55,6 @@ uv run mypy . --strict
 ```bash
 uv run pytest
 ```
-
-After reliability phases 1–4 on 2026-07-14,
-all 131 tests, Ruff, and strict mypy passed.
 
 ## Environment cautions
 

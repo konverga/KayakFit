@@ -107,8 +107,8 @@ def test_summary_uses_program_steps_and_labels_laps() -> None:
     # Each planned step owns its own active-only averages. The six coast rows
     # are no longer folded into Work; they belong to Rest, and its motionless
     # remainder cannot lower the averages.
-    assert abs(s.laps[0].duration_s - 60.0) < 1e-6, s.laps[0].duration_s
-    assert s.laps[1].duration_s == 6.0
+    assert abs(s.laps[0].active_time_s - 60.0) < 1e-6, s.laps[0].active_time_s
+    assert s.laps[1].active_time_s == 6.0
     assert abs(s.laps[2].start_s - 90.0) < 1e-6
     print("  ok: summary reports active-only averages for every planned step")
 
@@ -230,7 +230,7 @@ def test_summary_agrees_with_fit_export() -> None:
         def add(self, message=None):
             self.messages.append(message)
 
-    exporter = FitExporter(config={"log_level": "warning"})
+    exporter = FitExporter()
     finalized = finalize_workout(table, program_steps=steps)
     exporter._add_records(
         builder=_RecordingBuilder(),
@@ -245,17 +245,17 @@ def test_summary_agrees_with_fit_export() -> None:
     t0 = finalized.start_time_ms
     assert t0 is not None
     for seg, lap in zip(finalized.laps, summary.laps, strict=False):
-        fit_start_s = (seg["start_time_ms"] - t0) / 1000.0
-        fit_elapsed_s = (seg["end_time_ms"] - seg["start_time_ms"]) / 1000.0
-        fit_duration_s = seg["timer_time_ms"] / 1000.0
+        fit_start_s = (seg.start_time_ms - t0) / 1000.0
+        fit_elapsed_s = (seg.end_time_ms - seg.start_time_ms) / 1000.0
+        fit_duration_s = seg.timer_time_ms / 1000.0
         assert abs(fit_start_s - lap.start_s) < 1e-6, (fit_start_s, lap.start_s)
-        assert abs(fit_elapsed_s - lap.elapsed_s) < 1e-6, (
+        assert abs(fit_elapsed_s - lap.elapsed_time_s) < 1e-6, (
             fit_elapsed_s,
-            lap.elapsed_s,
+            lap.elapsed_time_s,
         )
-        assert abs(fit_duration_s - lap.duration_s) < 1e-6, (
+        assert abs(fit_duration_s - lap.active_time_s) < 1e-6, (
             fit_duration_s,
-            lap.duration_s,
+            lap.active_time_s,
         )
     print(f"  ok: FIT export and summary agree on {len(summary.laps)} identical laps")
 
@@ -292,7 +292,7 @@ def test_program_lap_is_clipped_to_active_signal() -> None:
         }
     ]
     summary = compute_summary(Table(columns, rows), program_steps=steps)
-    assert summary.duration_s == 4.0
+    assert summary.active_time_s == 4.0
     assert len(summary.laps) == 1
     assert summary.series_hr == [121.0, 122.0, 124.0, 125.0]
     assert summary.series_breaks == [True, False, True, False]
@@ -338,9 +338,9 @@ def test_sample_window_crossing_step_boundary_is_split_exactly() -> None:
 
     assert [lap.record_weights_s for lap in finalized.laps] == [(1.0,), (1.0,)]
     assert [lap.distance_m for lap in summary.laps] == [5.0, 5.0]
-    assert [lap.duration_s for lap in summary.laps] == [1.0, 1.0]
+    assert [lap.active_time_s for lap in summary.laps] == [1.0, 1.0]
     assert sum(lap.distance_m for lap in summary.laps) == summary.distance_m
-    assert sum(lap.duration_s for lap in summary.laps) == summary.duration_s
+    assert sum(lap.active_time_s for lap in summary.laps) == summary.active_time_s
 
 
 def test_centimetre_split_keeps_every_average_bounded_by_its_maximum() -> None:
@@ -495,7 +495,7 @@ def test_terminal_planned_step_uses_the_persisted_session_endpoint() -> None:
     assert finalized.laps[0].end_time_ms == T0 + 5_000
     assert finalized.laps[0].timer_time_ms == finalized.total_timer_time_ms == 5_000
     assert finalized.laps[0].distance_m == finalized.total_distance_m == 15.0
-    assert summary.laps[0].duration_s == summary.duration_s == 5.0
+    assert summary.laps[0].active_time_s == summary.active_time_s == 5.0
     assert summary.laps[0].distance_m == summary.distance_m == 15.0
 
 
@@ -565,7 +565,7 @@ def test_meaningful_pause_breaks_chart_without_splitting_planned_lap() -> None:
         }
     ]
     summary = compute_summary(Table(columns, rows), program_steps=steps)
-    assert summary.duration_s == 4.0
+    assert summary.active_time_s == 4.0
     assert len(summary.laps) == 1
     assert summary.series_breaks == [True, False, True, False]
     print("  ok: long pause breaks chart but planned step remains one lap")
@@ -641,14 +641,14 @@ def test_summary_keeps_motionless_rest_as_empty_planned_step() -> None:
     summary = compute_summary(Table(columns, rows), program_steps=steps)
     assert [lap.kind for lap in summary.laps] == ["work", "rest", "work"]
     rest = summary.laps[1]
-    assert rest.duration_s == 0.0
-    assert rest.elapsed_s == 5.0
+    assert rest.active_time_s == 0.0
+    assert rest.elapsed_time_s == 5.0
     assert rest.avg_hr is None and rest.avg_power is None and rest.avg_spm is None
     from app.export_fit import FitExporter
 
     with tempfile.TemporaryDirectory() as directory:
         fit_path = Path(directory) / "planned-rest.fit"
-        assert FitExporter({"log_level": "warning"}).export(
+        assert FitExporter().export(
             Table(columns, rows), str(fit_path), program_steps=steps
         )
         assert fit_path.exists()
@@ -682,7 +682,7 @@ def test_planned_rest_survives_a_recording_gap() -> None:
     summary = compute_summary(Table(columns, rows), program_steps=steps)
     assert [lap.kind for lap in summary.laps] == ["work", "rest", "work"]
     rest = summary.laps[1]
-    assert rest.duration_s == 0.0 and rest.elapsed_s == 5.0
+    assert rest.active_time_s == 0.0 and rest.elapsed_time_s == 5.0
     assert rest.avg_hr is None
     print("  ok: planned rest remains visible even when no idle row was recorded")
 

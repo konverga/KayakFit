@@ -6,9 +6,9 @@ Stores one all-or-nothing authorization bundle in the platform's vault:
     - Windows:  Credential Locker
     - Linux:    Secret Service (if available)
 
-Backed by the optional ``keyring`` package. If keyring is not installed or no
-usable backend is present, every function degrades gracefully (``available()``
-returns False) and the caller keeps the secrets in the config file instead.
+Backed by the required ``keyring`` package. If no usable backend is present,
+``available()`` returns False and the caller keeps the secrets in the config
+file instead.
 
 All credentials are kept in a **single** vault entry (a small JSON blob) rather
 than one entry per key. On macOS an unsigned app is prompted for the login
@@ -22,15 +22,8 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-try:  # keyring is optional; absence must never break the app.
-    import keyring
-    from keyring.backends.fail import Keyring as _FailKeyring
-
-    _IMPORTED = True
-except Exception:
-    keyring = None  # type: ignore[assignment]
-    _FailKeyring = None  # type: ignore[assignment, misc]
-    _IMPORTED = False
+import keyring
+from keyring.backends.fail import Keyring as _FailKeyring
 
 SERVICE = "KayakFit"
 
@@ -87,11 +80,9 @@ def _normalize_credentials(values: Mapping[str, Any]) -> dict[str, Any]:
 
 def available() -> bool:
     """Return True if a usable OS credential backend is present."""
-    if not _IMPORTED or keyring is None:
-        return False
     try:
         backend = keyring.get_keyring()
-        if _FailKeyring is not None and isinstance(backend, _FailKeyring):
+        if isinstance(backend, _FailKeyring):
             return False
         return backend is not None
     except Exception:
@@ -128,8 +119,7 @@ def store_credentials(values: Mapping[str, Any]) -> bool:
 def load_credentials() -> dict[str, Any]:
     """Read one complete authorization from the vault.
 
-    Incomplete entries are rejected and deleted; this pre-release application
-    intentionally does not migrate the former partial credential format.
+    Incomplete or malformed entries are rejected and deleted.
     """
     global _cache
     if _cache is not None:

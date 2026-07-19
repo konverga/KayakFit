@@ -15,15 +15,14 @@ the **effective handle pull length** `L`.
 
 ## Current calibration
 
-The shipped default is `L = 0.623 m`, fitted against manually logged display
-values (2026-07-03 BULL session, 59 paired readings): RMSE 1.1 W, R² 0.89,
-98% of points within ±5 W. The same `L` also reproduces the display's session
-*Average Power*, which the firmware computes as
-`L × avg_force × avg_cadence / 60` (product of cumulative means).
+The shipped default is `L = 0.623 m`, calibrated to reproduce the ergometer
+display from stroke-averaged force and cadence. The display's session
+*Average Power* uses `L × avg_force × avg_cadence / 60` (the product of
+cumulative means).
 
 Notes on expected small deviations (see `app/summary.py`):
 
-- KayakFit's session average power is the time-average of per-second estimates
+- KayakFit's session average power is the represented-time average of per-sample estimates
   (mean of products); the machine display uses the product of means, which
   reads a few watts higher when force and cadence co-vary.
 - The display's "Max Power" is a sub-second within-stroke peak (~2.2× the
@@ -39,8 +38,9 @@ If your machine or firmware reads differently, refit `L`:
    better; vary cadence and force independently if you can.
 2. For each paired reading, compute a length estimate from the model:
    `L_i = 60 × display_power_W / (pull_force_N × cadence_spm)`. Use the
-   stroke-averaged CSV fields (`pull_force__n`, `cadence__spm`) — the
-   instantaneous fields are single-stroke snapshots with ~25× the noise.
+   stroke-averaged CSV fields (`pull_force__n`, `cadence__spm`); the
+   instantaneous fields are single-stroke snapshots and do not match the
+   calibrated model as closely.
 3. Fit a single `L` across all points (a least-squares fit of display power
    against `force × cadence / 60`, or simply the mean of the `L_i` values if
    they are tight). Sanity-check the residuals: RMSE within a few watts means

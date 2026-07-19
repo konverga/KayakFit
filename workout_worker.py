@@ -48,7 +48,7 @@ async def run_workout_worker(
         ergometer_mac: Optional ergometer MAC address override
         log_callback: Optional callback function for logging
         stop_event: Optional threading.Event to signal stop request
-        data_callback: Optional callback receiving each per-second data dict
+        data_callback: Optional callback receiving each recorded sensor sample
         status_callback: Optional callback receiving connection/session status events
         prompt_callback: Optional blocking yes/no prompt ``(title, message) -> bool``
         program: Optional structured training Program to drive the session

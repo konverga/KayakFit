@@ -1,7 +1,7 @@
 """Live workout recording orchestrator.
 
 Coordinates a complete session: connects the ergometer and (optionally) a
-heart-rate monitor over BLE, merges their async callbacks into per-second rows
+heart-rate monitor over BLE, merges their async callbacks into sensor-sample rows
 written straight to CSV, and feeds the live UI through data/status callbacks.
 Runs the shared ``LiveSegmenter`` for real-time autopause/lap indication, an
 optional ``ProgramRunner`` for structured workouts (recording each step's real
@@ -37,8 +37,8 @@ from .kayakfirst_ergometer_bluetooth import (
 from .logger import Logger
 from .program import Program
 from .program_runner import ProgramRunner
-from .recording_timeline import RecordingTimeline
 from .read_csv import CsvReader
+from .recording_timeline import RecordingTimeline
 from .segmentation import (
     LiveSegmenter,
     load_program_steps,
@@ -51,6 +51,7 @@ from .workout_paths import WorkoutPaths
 from .write_csv import CsvWriteError, CsvWriter
 
 _HRM_DISCOVERY_ATTEMPTS = 2
+_PROGRAM_CHECKPOINT_INTERVAL_S = 15.0
 _HRM_DISCOVERY_RETRY_DELAY_S = 1.0
 
 
@@ -84,7 +85,7 @@ class WorkoutSession:
             boat_weight: Override boat weight (kg), uses config default if None.
             person_weight: Override person weight (kg), uses config default if None.
             log_callback: Optional callback function for logging.
-            data_callback: Optional callback receiving each per-second data dict
+            data_callback: Optional callback receiving each sensor-sample dictionary
                 (for a live UI readout).
             status_callback: Optional callback receiving connection/session status
                 events (dicts with an ``event`` key).
@@ -120,9 +121,6 @@ class WorkoutSession:
         self._current_step_entry: dict[str, Any] | None = None
         self._last_session_elapsed_s: float | None = None
         self._last_program_checkpoint_monotonic = 0.0
-        self._program_checkpoint_interval_s = max(
-            float(self.config.get("program_checkpoint_interval_s", 15.0)), 1.0
-        )
 
         if boat_weight is not None:
             self.config["boat_weight_default"] = boat_weight
@@ -278,7 +276,7 @@ class WorkoutSession:
         if (
             not force
             and now - self._last_program_checkpoint_monotonic
-            < self._program_checkpoint_interval_s
+            < _PROGRAM_CHECKPOINT_INTERVAL_S
         ):
             return
         try:
@@ -437,7 +435,7 @@ class WorkoutSession:
 
             if self.csv_path and self.data_point_count > 0:
                 try:
-                    reader = CsvReader(file_path=self.csv_path, config=self.config)
+                    reader = CsvReader(file_path=self.csv_path)
                     workout_df = reader.read_all()
                     self._print_workout_summary(workout_df=workout_df)
                     if self._summary_error is not None:
@@ -506,7 +504,7 @@ class WorkoutSession:
         except OSError as exc:
             raise CsvWriteError(str(exc)) from exc
         try:
-            self.csv_writer = CsvWriter(output_path=str(paths.csv), config=self.config)
+            self.csv_writer = CsvWriter(output_path=str(paths.csv))
             self.csv_path = str(paths.csv)
             save_workout_metadata(
                 paths.csv,
@@ -926,7 +924,7 @@ class WorkoutSession:
                     else None
                 ),
                 program_steps=load_program_steps(self.csv_path) if self.csv_path else None,
-                config=self.config,
+                pull_length_m=self.config["pull_length_m"],
             )
             total_distance = summary.distance_m
             active_time = summary.active_time_s
@@ -945,7 +943,6 @@ class WorkoutSession:
                 event="summary",
                 device="session",
                 distance_m=total_distance,
-                duration_s=int(active_time),
                 active_time_s=active_time,
                 elapsed_time_s=elapsed_time,
                 pause_time_s=summary.pause_time_s,

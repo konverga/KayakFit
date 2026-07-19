@@ -125,7 +125,7 @@ class StravaUploader:
 
         if file_path_obj.suffix.lower() == ".csv":
             self.logger.info(msg=f"Converting CSV to FIT: {file_path_obj.name}")
-            convert_result = FitExporter.convert_csv_to_fit(str(file_path_obj), self.config)
+            convert_result = FitExporter.convert_csv_to_fit(str(file_path_obj))
             if not convert_result["success"]:
                 return {
                     "success": False,

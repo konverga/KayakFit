@@ -111,7 +111,7 @@ class ProgramPanelMixin(_MixinBase):
 
     def _on_program_selected(self, name: str) -> None:
         """Show a compact, calculation-free description of the selected plan."""
-        program = self._programs.get(self._selected_program_name(name))
+        program = self._programs.get(self._selected_program_id(name))
         if program is None:
             self.program_preview_var.set("Free workout · no planned steps")
             return
@@ -148,7 +148,7 @@ class ProgramPanelMixin(_MixinBase):
             return
         try:
             warnings: list[str] = []
-            programs = {p.name: p for p in program_mod.list_programs(warnings)}
+            programs = {p.identifier: p for p in program_mod.list_programs(warnings)}
         except Exception:  # never let a bad program file break the UI
             return
         # Announce load issues only when they change, so a persistently bad
@@ -157,17 +157,29 @@ class ProgramPanelMixin(_MixinBase):
         if sig != self._program_warn_sig:
             self._program_warn_sig = sig
             self._flush_program_warnings(warnings)
-        if list(programs) == list(self._programs):
+        old_menu = [
+            (identifier, program.name)
+            for identifier, program in self._programs.items()
+        ]
+        new_menu = [
+            (identifier, program.name)
+            for identifier, program in programs.items()
+        ]
+        if new_menu == old_menu:
             self._programs = programs  # refresh contents, menu unchanged
             self._on_program_selected(self.program_var.get())
             return
-        selected_name = self._selected_program_name()
+        selected_id = self._selected_program_id()
         self._programs = programs
         self._program_labels = self._build_program_labels()
         values = [self._free_label, *list(self._program_labels)]
         self.program_menu.configure(values=values)
         selected_label = next(
-            (label for label, name in self._program_labels.items() if name == selected_name),
+            (
+                label
+                for label, identifier in self._program_labels.items()
+                if identifier == selected_id
+            ),
             self._free_label,
         )
         if selected_label not in values:
@@ -267,7 +279,7 @@ class ProgramPanelMixin(_MixinBase):
         """Play a one-shot countdown cue a fixed lead time before a step ends."""
         if self.program.ending_warned or not isinstance(rem, (int, float)):
             return
-        warn_s = float(self.cfg.get("step_warn_seconds", self.STEP_WARN_SECONDS))
+        warn_s = self.STEP_WARN_SECONDS
         if warn_s <= 0:
             return
         if kind_r == "time":
@@ -283,7 +295,7 @@ class ProgramPanelMixin(_MixinBase):
             threshold = (
                 speed * warn_s
                 if speed > 0.3
-                else float(self.cfg.get("step_warn_meters", self.STEP_WARN_METERS))
+                else self.STEP_WARN_METERS
             )
         else:
             return  # open-ended step: no defined end to warn about
@@ -397,7 +409,7 @@ class ProgramPanelMixin(_MixinBase):
         self.program_step_progress.configure(progress_color=STEP_COLOR_DEFAULT)
 
     def _flush_program_warnings(self, warnings: list[str]) -> None:
-        """Surface a one-line summary of skipped/shadowed training plans.
+        """Surface a one-line summary of skipped training plans.
 
         Keeps the activity log uncluttered — the per-file reasons are logged
         (and land in ~/KayakFit/logs/kayakfit.log) by app.program itself.
@@ -406,17 +418,17 @@ class ProgramPanelMixin(_MixinBase):
             return
         n = len(warnings)
         self.log_message(
-            f"⚠ {n} training plan{'s' if n != 1 else ''} skipped or with "
-            "issues — see the log for details.\n"
+            f"⚠ {n} invalid training plan{'s' if n != 1 else ''} skipped — "
+            "see the log for details.\n"
         )
 
     _PROGRAM_LABEL_LIMIT = 34
 
     def _build_program_labels(self) -> dict[str, str]:
-        """Map bounded dropdown labels to the programs' complete names."""
+        """Map bounded, unique dropdown labels to stable file identifiers."""
         labels: dict[str, str] = {}
-        for name in self._programs:
-            label = name
+        for identifier, program in self._programs.items():
+            label = program.name
             if len(label) > self._PROGRAM_LABEL_LIMIT:
                 label = label[: self._PROGRAM_LABEL_LIMIT - 1].rstrip() + "…"
             if label in labels:
@@ -425,10 +437,10 @@ class ProgramPanelMixin(_MixinBase):
                 while f"{base}… {suffix}" in labels:
                     suffix += 1
                 label = f"{base}… {suffix}"
-            labels[label] = name
+            labels[label] = identifier
         return labels
 
-    def _selected_program_name(self, label: str | None = None) -> str:
-        """Resolve a bounded dropdown label to its full program name."""
+    def _selected_program_id(self, label: str | None = None) -> str:
+        """Resolve a bounded dropdown label to its stable file identifier."""
         selected = str(self.program_var.get()) if label is None else label
         return str(self._program_labels.get(selected, selected))

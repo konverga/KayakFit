@@ -36,6 +36,7 @@ def test_positive_filtering_and_avg_speed():
         power_cadence=cadence,
         power_pull_force=pull_force,
         speed=speed,
+        sample_weights=[1.0] * 20,
     )
     # Zeros excluded: average is 150 / 60, not 75 / 30.
     assert m["avg_heart_rate"] == 150.0, m["avg_heart_rate"]
@@ -53,7 +54,12 @@ def test_positive_filtering_and_avg_speed():
 
 
 def test_all_missing_returns_none():
-    m = aggregate_metrics(heart_rate=[None, 0, None], cadence=[0, 0], speed=[0, 0])
+    m = aggregate_metrics(
+        heart_rate=[None, 0, None],
+        cadence=[0, 0],
+        speed=[0, 0],
+        sample_weights=[1.0, 1.0, 1.0],
+    )
     assert m["avg_heart_rate"] is None
     assert m["max_heart_rate"] is None
     assert m["avg_cadence"] is None
@@ -74,7 +80,7 @@ def test_invalid_recorded_speed_does_not_fall_back_to_distance():
 
 
 def test_generic_aggregator_does_not_rewrite_an_independent_peak() -> None:
-    metrics = aggregate_metrics(speed=[2.70, 2.71])
+    metrics = aggregate_metrics(speed=[2.70, 2.71], sample_weights=[1.0, 1.0])
 
     assert metrics["avg_speed"] is not None
     assert metrics["max_speed"] == 2.71
@@ -130,7 +136,7 @@ def test_finalized_summary_excludes_dropouts():
     # Single continuous lap covering the whole workout.
     assert len(summary.laps) == 1
     assert abs(summary.distance_m - 50.0) < 1e-9
-    assert abs(summary.duration_s - 20.0) < 1e-9
+    assert abs(summary.active_time_s - 20.0) < 1e-9
 
     # Zeros are excluded: HR average is 150, not 75.
     assert summary.avg_hr == 150.0
@@ -174,7 +180,7 @@ def test_avg_speed_is_the_recorded_sample_mean():
 
     summary = compute_summary(table)
     covered = summary.distance_m
-    duration = summary.duration_s
+    duration = summary.active_time_s
     distance_time_speed = covered / duration
 
     # Sample mean of the speed column would be (1+..+10)/10 = 5.5; the physical

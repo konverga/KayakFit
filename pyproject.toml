@@ -110,11 +110,6 @@ ignore = [
     # use, so suppress it here (same judgment-call treatment as the D1xx rules
     # above) rather than annotating misleadingly-specific types.
     "ANN401",
-    # N999 fires only because this working copy's top-level folder is named
-    # "claude-optimized" (a hyphen isn't a valid module name). It's an artifact
-    # of the directory name, not of any code in the package, and renaming the
-    # user's folder is out of scope.
-    "N999",
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -127,10 +122,9 @@ convention = "google"
 known-first-party = ["app", "gui"]
 
 [tool.ruff.lint.per-file-ignores]
-# Standalone test scripts (see docs/STYLE_GUIDE.md) predate
-# this config and follow their own convention, not general application code
-# style -- don't fight them with docstring/annotation rules meant for app
-# code.
+# Tests use plain asserts and a lightweight annotation convention; keep
+# application docstring and annotation-presence rules focused on production
+# code. Ruff still checks all other enabled rules in tests.
 "tests/*.py" = ["D", "ANN"]
 
 [tool.mypy]

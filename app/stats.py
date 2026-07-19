@@ -36,10 +36,11 @@ It returns plain floats/ints; each caller coerces to its own field types
 (``Decimal``/``int`` for FIT's typed fields, ``float``/``int`` for the GUI).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from math import isfinite
 from typing import Any
 
+from .finalized_workout import ActivitySegment
 from .power import DEFAULT_PULL_LENGTH_M, estimate_power
 
 # Fractions of max HR used to derive the five zone lower bounds when explicit
@@ -76,7 +77,7 @@ def zone_lower_bounds(
 def time_in_hr_zones(
     *,
     heart_rate: Sequence[Any],
-    segments: Sequence[Mapping[str, Any]],
+    segments: Sequence[ActivitySegment],
     bounds: Sequence[int],
     sample_weights: Sequence[Any],
 ) -> list[float]:
@@ -88,8 +89,7 @@ def time_in_hr_zones(
     Args:
         heart_rate: Per-record heart-rate readings; None/0/unparseable values
             are treated as no signal and credited to no zone.
-        segments: Moving segments (dicts with ``start_idx``/``end_idx``,
-            inclusive) from ``app.segmentation`` — the same list used for laps.
+        segments: Finalized active segments shared with FIT timer events.
         bounds: Ascending zone lower bounds (bpm), e.g. from
             :func:`zone_lower_bounds`.
         sample_weights: Represented seconds per record.
@@ -100,16 +100,7 @@ def time_in_hr_zones(
     zone_seconds = [0.0] * len(bounds)
     last = len(heart_rate) - 1
     for seg in segments:
-        raw_indices = seg.get("record_indices")
-        indices = (
-            [int(index) for index in raw_indices]
-            if raw_indices is not None
-            else range(
-                max(int(seg["start_idx"]), 0),
-                min(int(seg["end_idx"]), last) + 1,
-            )
-        )
-        for i in indices:
+        for i in seg.record_indices:
             if i < 0 or i > last:
                 continue
             hr_raw = heart_rate[i]
@@ -156,13 +147,10 @@ def _positive_floats(
 
 def _weighted_positive_mean(
     values: Sequence[Any] | None,
-    weights: Sequence[Any] | None,
+    weights: Sequence[Any],
     maximum: float | None = None,
 ) -> float | None:
     """Mean of positive readings, weighted by their represented seconds."""
-    if weights is None:
-        positive = _positive_floats(values, maximum)
-        return sum(positive) / len(positive) if positive else None
     weighted_sum = 0.0
     total_weight = 0.0
     for value, weight in zip(values or (), weights, strict=False):
@@ -200,7 +188,7 @@ def aggregate_metrics(
     power_cadence: Sequence[Any] | None = None,
     power_pull_force: Sequence[Any] | None = None,
     speed: Sequence[Any] | None = None,
-    sample_weights: Sequence[Any] | None = None,
+    sample_weights: Sequence[Any],
     pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
 ) -> dict[str, float | None]:
     """Compute averaged/peak workout metrics with the shared rules.
@@ -214,10 +202,9 @@ def aggregate_metrics(
         power_pull_force: per-record stroke-averaged pull force used only for
             power.
         speed: per-record instantaneous speed readings. Average speed is
-            time-weighted when ``sample_weights`` is supplied; maximum speed is
-            the largest valid reading.
-        sample_weights: optional represented seconds per sensor sample. When
-            present, HR, cadence, power, and speed averages are time-weighted.
+            time-weighted; maximum speed is the largest valid reading.
+        sample_weights: Represented seconds per sensor sample. HR, cadence,
+            power, and speed averages are time-weighted.
         pull_length_m: Effective handle pull length used for power estimation.
 
     Returns:
@@ -254,18 +241,15 @@ def aggregate_metrics(
         power_pull_force, power_cadence, pull_length_m
     )
     if powers:
-        if sample_weights is None:
-            result["avg_power"] = sum(powers) / len(powers)
-        else:
-            aligned_power = [
-                estimate_power(force, rate, pull_length_m)
-                for force, rate in zip(
-                    power_pull_force or (), power_cadence or (), strict=False
-                )
-            ]
-            result["avg_power"] = _weighted_positive_mean(
-                aligned_power, sample_weights, 65535
+        aligned_power = [
+            estimate_power(force, rate, pull_length_m)
+            for force, rate in zip(
+                power_pull_force or (), power_cadence or (), strict=False
             )
+        ]
+        result["avg_power"] = _weighted_positive_mean(
+            aligned_power, sample_weights, 65535
+        )
         result["max_power"] = max(powers)
 
     speed_values: list[float] = []
@@ -278,22 +262,19 @@ def aggregate_metrics(
             if 0 <= reading <= 65.535:
                 speed_values.append(reading)
     if speed_values:
-        if sample_weights is None:
-            result["avg_speed"] = sum(speed_values) / len(speed_values)
-        else:
-            weighted_sum = 0.0
-            total_weight = 0.0
-            for value, weight in zip(speed or (), sample_weights, strict=False):
-                try:
-                    reading = float(value)
-                    seconds = float(weight)
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= reading <= 65.535 and isfinite(seconds) and seconds > 0:
-                    weighted_sum += reading * seconds
-                    total_weight += seconds
-            if total_weight > 0:
-                result["avg_speed"] = weighted_sum / total_weight
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for value, weight in zip(speed or (), sample_weights, strict=False):
+            try:
+                reading = float(value)
+                seconds = float(weight)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= reading <= 65.535 and isfinite(seconds) and seconds > 0:
+                weighted_sum += reading * seconds
+                total_weight += seconds
+        if total_weight > 0:
+            result["avg_speed"] = weighted_sum / total_weight
         result["max_speed"] = max(speed_values)
 
     return result

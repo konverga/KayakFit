@@ -50,7 +50,7 @@ class GuiSharedState:
     _program_labels: Any
     _program_warn_sig: Any
     _programs: Any
-    _selected_program_name: Any
+    _selected_program_id: Any
     _refresh_hr_legend: Any
     _reload_cfg: Any
     _reset_device_chips: Any

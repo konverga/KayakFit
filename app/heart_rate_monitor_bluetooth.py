@@ -16,7 +16,6 @@ from bleak.backends.device import BLEDevice
 from .ble_device import BleDevice
 from .events import StatusPayload
 
-HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"
 HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb"
 # Standard BLE Battery Service / Battery Level characteristic.
 BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"

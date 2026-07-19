@@ -251,11 +251,10 @@ does not imply that every current code path satisfies it perfectly.
   FIT record speed use valid active `speed_instant` readings. Cumulative
   odometer distance is a separate recorded channel and is never capped or
   rewritten using speed.
-- **Rationale:** The recorded workout that motivated this change cannot satisfy
-  both `average speed = distance / active time` and its recorded instantaneous
-  averages/maximum: resume odometer jumps imply derived lap averages above the
-  recorded overall maximum. Keeping the two observations independent is the
-  simplest reproducible policy and avoids inventing undocumented corrections.
+- **Rationale:** Odometer changes around pauses can make
+  `distance / active time` disagree with the recorded instantaneous-speed
+  series. Keeping the two observations independent is reproducible and avoids
+  inventing corrections that are absent from the sensor data.
 - **Consequences:**
   - `lap distance / lap active time` can differ from reported average speed.
   - A valid time-weighted average cannot exceed its raw maximum; constant speed
@@ -284,25 +283,3 @@ does not imply that every current code path satisfies it perfectly.
   use averaged device fields. Summary graphs, aggregates, and FIT records use
   instantaneous sensor channels except for averaged-input power. Changing app
   settings cannot reinterpret a workout's metric channels.
-
-## Branch history and handoff
-
-The `feature/fit-summary-source-of-truth` branch was created from `main` at
-`c744d05`. Its focused commits introduced:
-
-- a shared finalized workout model;
-- shared FIT-compatible metric aggregation;
-- recorded processing metadata;
-- authoritative active-paddling timing and removal of HR-only tails;
-- planned-step versus free-workout grouping;
-- summary chart segmentation refinements;
-- decoded-FIT regression tests and atomic replacement safeguards;
-- fail-closed CSV persistence and collision-safe recording paths;
-- exact overshoot-preserving planned boundaries and sample-window splits;
-- active-only FIT record distance and authoritative chart/live metric policy.
-
-Before merging the branch, Claude should review `main...HEAD`, the current
-worktree, this decision record, and the completion evidence plus remaining P1/P2
-items in [ROADMAP.md](ROADMAP.md). The critical phases were implemented as one
-coherent domain change; review their invariants together rather than treating
-FIT, summary, planned timing, and persistence as independent patches.

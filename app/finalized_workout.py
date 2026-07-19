@@ -1,6 +1,5 @@
 """Single finalized timeline shared by FIT export and workout summaries."""
 
-from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from math import floor, isfinite
 from typing import Any
@@ -11,7 +10,7 @@ from .table import Table
 
 
 @dataclass(frozen=True)
-class ActivitySegment(Mapping[str, Any]):
+class ActivitySegment:
     """One exact contiguous run of active ergometer records."""
 
     start_idx: int
@@ -21,26 +20,8 @@ class ActivitySegment(Mapping[str, Any]):
     timer_time_ms: int
     record_indices: tuple[int, ...]
 
-    def __getitem__(self, key: str) -> Any:
-        if key not in (
-            "start_idx", "end_idx", "start_time_ms", "end_time_ms",
-            "timer_time_ms", "record_indices",
-        ):
-            raise KeyError(key)
-        return getattr(self, key)
-
-    def __iter__(self) -> Iterator[str]:
-        return iter((
-            "start_idx", "end_idx", "start_time_ms", "end_time_ms",
-            "timer_time_ms", "record_indices",
-        ))
-
-    def __len__(self) -> int:
-        return 6
-
-
 @dataclass(frozen=True)
-class FinalizedLap(Mapping[str, Any]):
+class FinalizedLap:
     """One immutable reporting/FIT lap over zero or more active records."""
 
     start_idx: int
@@ -54,28 +35,6 @@ class FinalizedLap(Mapping[str, Any]):
     kind: str | None = None
     label: str | None = None
     program_step_index: int | None = None
-
-    def __getitem__(self, key: str) -> Any:
-        if key not in (
-            "start_idx", "end_idx", "start_time_ms", "end_time_ms",
-            "timer_time_ms", "record_indices", "record_weights_s",
-            "distance_m", "kind", "label", "program_step_index",
-        ):
-            raise KeyError(key)
-        return getattr(self, key)
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(
-            (
-                "start_idx", "end_idx", "start_time_ms", "end_time_ms",
-                "timer_time_ms", "record_indices", "record_weights_s",
-                "distance_m", "kind", "label", "program_step_index",
-            )
-        )
-
-    def __len__(self) -> int:
-        return 11
-
 
 @dataclass(frozen=True)
 class FinalizedWorkout:
@@ -106,12 +65,12 @@ class FinalizedWorkout:
     @property
     def start_time_ms(self) -> int | None:
         """Timestamp of the first FIT timer START event."""
-        return self.segments[0]["start_time_ms"] if self.segments else None
+        return self.segments[0].start_time_ms if self.segments else None
 
     @property
     def end_time_ms(self) -> int | None:
         """Timestamp of the final active FIT record/STOP event."""
-        return self.segments[-1]["end_time_ms"] if self.segments else None
+        return self.segments[-1].end_time_ms if self.segments else None
 
     @property
     def total_pause_time_ms(self) -> int:

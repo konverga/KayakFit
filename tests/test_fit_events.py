@@ -84,7 +84,7 @@ class RecordingBuilder:
 
 def _make_exporter():
     exporter = FitExporter.__new__(FitExporter)
-    exporter.config = {}
+    exporter.pull_length_m = 0.623
 
     class _DummyLogger:
         def info(self, msg=""):
@@ -184,7 +184,7 @@ def test_records_are_sensor_samples_plus_gps_start_anchors() -> None:
     messages, segments = _emit_stream()
     records = [m for m in messages if type(m).__name__ == "RecordMessage"]
     record_count = len(records)
-    sensor_count = sum(len(seg["record_indices"]) for seg in segments)
+    sensor_count = sum(len(seg.record_indices) for seg in segments)
     expected = sensor_count + len(segments)
     assert record_count == expected, f"{record_count} records, expected {expected}"
     # Three moving blocks of eight plus one compatibility anchor per block.
@@ -240,7 +240,7 @@ def test_inactive_tail_excluded_even_with_stale_speed() -> None:
     segments = exporter._add_records(builder=builder, workout_df=df)
 
     last_moving_ts = base + 10 * 1000
-    assert segments[-1]["end_time_ms"] == last_moving_ts, segments[-1]
+    assert segments[-1].end_time_ms == last_moving_ts, segments[-1]
     record_ts = [
         m.timestamp for m in builder.messages if type(m).__name__ == "RecordMessage"
     ]

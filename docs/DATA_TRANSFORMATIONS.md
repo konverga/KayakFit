@@ -162,24 +162,12 @@ FIT file.
 
 ### Why speed is not distance / active time
 
-The supplied recording `workout_20260717_210142` demonstrates that the two raw
-channels can disagree. Its lap distances and active times imply:
-
-```text
-47 m / 17 s = 9.95 km/h
-40 m / 13 s = 11.08 km/h
-30 m /  9 s = 12.00 km/h
-```
-
-Those values cannot coexist with the recorded `10.22 km/h` overall maximum or
-the requested lap averages near `8.77`, `9.25`, and `8.96 km/h`. KayakFit keeps
-both source measurements honest: odometer for distance, instantaneous sensor
-for speed. Therefore `lap speed = lap distance / lap duration` is intentionally
-not an invariant for recorded workouts.
-
-The second lap's recorded values produce `9.27 km/h`, not `9.25 km/h`. No
-reproducible calculation over the saved two-decimal speed samples produces
-`9.25 km/h` without adding an undocumented correction.
+The cumulative odometer and instantaneous speed are independent sensor
+channels. Firmware behavior, sampling boundaries, and odometer changes around
+pauses can make `distance / active time` differ from the time-weighted sensor
+speed. KayakFit preserves both observations: the odometer owns distance and the
+instantaneous speed channel owns speed. Therefore
+`lap speed = lap distance / lap active time` is intentionally not an invariant.
 
 ### Chart points
 
@@ -220,24 +208,6 @@ Each exact contiguous active run is one free-workout lap and one FIT timer run.
 Inactive rows are not lap records and do not enter averages. A pause appears as
 the gap between one lap end and the next lap start. An inactive recording prefix
 or tail remains part of session elapsed time and the graph bounds.
-
-For `workout_20260717_210142`, applying the rules above gives:
-
-| Lap | Start | Active/elapsed | Distance | Average speed |
-|---|---:|---:|---:|---:|
-| 1 | 0 s | 17 s | 47 m | 8.77 km/h |
-| 2 | 24 s | 13 s | 40 m | 9.27 km/h |
-| 3 | 45 s | 9 s | 30 m | 8.96 km/h |
-
-```text
-session elapsed time = 62 s
-session active time = 39 s
-session pause time = 23 s
-session active distance = 117 m
-session maximum speed = 10.22 km/h
-```
-
-The app summary and a decoded regenerated FIT contain those same values.
 
 ## 7. Planned-workout laps
 

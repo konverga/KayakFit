@@ -117,10 +117,8 @@ uv run mypy . --strict                  # static type checking (whole repo)
 
 `mypy` runs strict without a `--strict` flag: `strict = true` lives in
 `[tool.mypy]` in `pyproject.toml`, so `uv run mypy . --strict` (and your editor, and CI)
-all pick it up from config. It checks `tests/` too — a `[[tool.mypy.overrides]]`
-block relaxes only the annotation-presence rules there (listing the test modules
-by name, since without a `tests/__init__.py` mypy sees them as top-level
-`test_*` modules and a `test_*` glob isn't a legal pattern).
+all pick it up from config. It checks `tests/` too; the `tests.*` override
+relaxes only annotation-presence rules and automatically covers new modules.
 
 A PR that reports any `ruff` or `mypy` error is not ready to merge — fix the
 findings rather than suppressing them wholesale. Reach for `# noqa: <rule>` or
@@ -137,7 +135,7 @@ Two build-output details worth knowing so a clean checkout stays clean:
   `extend-exclude` and mypy via its `exclude` regex (which matches `/` and `\`
   so it holds on Windows too). Don't type-check or lint a packaged app.
 - `tests/*.py` are exempt from the docstring/annotation rules (Ruff
-  `per-file-ignores`), and a matching mypy `tests`/`test_*` override relaxes the
+  `per-file-ignores`), and a matching mypy `tests.*` override relaxes the
   same *annotation-presence* strictness there. They are **not** otherwise exempt
   from mypy — real type errors in tests (bad generics, attribute typos,
   non-overlapping comparisons) still fail the check.

@@ -22,9 +22,8 @@ from typing import Any
 
 from .ble_device import BleDevice
 from .events import StatusPayload
-from .field_mapping import COLUMN_TYPES, get_field_name
+from .field_mapping import COLUMN_TYPES, FIELD_MAP
 
-KAYAK_FIRST_SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb"
 KAYAK_FIRST_CHARACTERISTIC = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 RESET_CMD = "1\r\n"
@@ -193,11 +192,11 @@ class KayakFirstErgometer(BleDevice):
         return ";".join(str(x) for x in lst)
 
     def _parse_data_packet(self, packet: str) -> dict[str, Any] | None:
-        """Parse data stream packet and return ALL fields.
+        """Parse one complete data packet into the exact v1 field schema.
 
         KayakFirst data format (semicolon-separated):
-        Returns all fields from the packet with known field names where available
-        and col_x for unknown fields (only proceed with first row of the packet).
+        ``6;field1;field2;...;field23``. Packets with a different field count
+        or invalid load-bearing values are rejected.
 
         Args:
             packet: Raw packet string.
@@ -223,7 +222,7 @@ class KayakFirstErgometer(BleDevice):
                     parsed.append(int(part))
 
             data = {
-                get_field_name(index=i): value
+                FIELD_MAP[i]: value
                 for i, value in enumerate(iterable=parsed, start=1)
             }
             for field, value in data.items():

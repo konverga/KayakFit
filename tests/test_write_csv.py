@@ -15,7 +15,7 @@ from app.write_csv import CsvWriteError, CsvWriter
 def test_write_failure_is_terminal_and_does_not_increment_count() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "workout.csv"
-        writer = CsvWriter(str(path), {})
+        writer = CsvWriter(str(path))
         assert writer.writer is not None
         with (
             patch.object(writer.writer, "writerow", side_effect=OSError("disk full")),
@@ -32,7 +32,7 @@ def test_write_failure_is_terminal_and_does_not_increment_count() -> None:
 def test_successful_write_counts_only_flushed_rows() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "workout.csv"
-        writer = CsvWriter(str(path), {})
+        writer = CsvWriter(str(path))
         writer.write_record({"timestamp": 1, "distance__m": 3})
         assert writer.records_written == 1
         writer.close()

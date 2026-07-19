@@ -1,10 +1,7 @@
 """Minimal Strava REST client built directly on ``requests``.
 
-Replaces the ``stravalib`` dependency (which dragged ``pydantic`` +
-``pydantic_core`` into the packaged app) for the handful of endpoints KayakFit
-actually uses: the OAuth authorize URL, the token endpoint (authorization-code
-exchange and refresh), the activity upload endpoint, and the upload/activity
-read-backs. All of these are simple, well-documented calls.
+Implements the handful of endpoints KayakFit uses: the OAuth authorize URL,
+token exchange and refresh, activity upload, and upload/activity read-backs.
 
 This module is the single HTTP seam: it owns the endpoint URLs, turns any
 non-success into a clear :class:`StravaApiError` (HTTP status, network error,
@@ -43,8 +40,7 @@ class StravaApiError(Exception):
 class ActivityUploadError(StravaApiError):
     """Strava accepted the upload but reported an error while processing it.
 
-    The upload object's ``error`` field is set. Equivalent to stravalib's
-    ``exc.ActivityUploadError``.
+    The upload object's ``error`` field is set.
     """
 
 
@@ -52,7 +48,6 @@ class UploadTimeoutError(StravaApiError):
     """Client-side timeout while Strava was still processing the upload.
 
     Raised when the caller's poll window elapsed before Strava finished.
-    Equivalent to stravalib's ``exc.TimeoutExceeded``.
     """
 
 

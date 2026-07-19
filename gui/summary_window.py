@@ -24,7 +24,7 @@ import customtkinter as ctk
 from app.read_csv import CsvReader
 from app.segmentation import load_program_steps
 from app.summary import WorkoutSummary, compute_summary
-from app.workout_metadata import load_workout_config, load_workout_metadata
+from app.workout_metadata import load_workout_metadata
 
 from .metrics_format import fmt_metres, fmt_time, fmt_time_precise
 from .window_utils import center_over_parent
@@ -944,8 +944,9 @@ def _build_splits_table(master: Any, summary: WorkoutSummary) -> None:
 def _load_summary(csv_path: str) -> WorkoutSummary:
     """Load and compute a summary without touching Tk."""
     metadata = load_workout_metadata(csv_path)
-    config = load_workout_config(csv_path)
-    table = CsvReader(csv_path, config).read_all()
+    config = metadata["processing_config"]
+    assert isinstance(config, dict)
+    table = CsvReader(csv_path).read_all()
     zones = None
     if str(config.get("hr_zone_mode", "auto")).lower() == "manual":
         zones = list(config.get("hr_zones") or []) or None
@@ -958,7 +959,7 @@ def _load_summary(csv_path: str) -> WorkoutSummary:
             if metadata["workout_mode"] == "planned"
             else None
         ),
-        config=config,
+        pull_length_m=config["pull_length_m"],
     )
 
 

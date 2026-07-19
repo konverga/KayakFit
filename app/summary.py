@@ -2,7 +2,7 @@
 
 Turns a recorded workout (the Table produced by :class:`app.read_csv.CsvReader`)
 into the numbers the summary screen shows: totals and averages, per-lap splits,
-time in each heart-rate zone, and per-second series for the charts.
+time in each heart-rate zone, and recorded sample series for the charts.
 
 Pure computation with no GUI dependencies, so it is unit-testable and reusable
 (e.g. by a future trends view). Records, timer runs and lap groups come from the
@@ -13,7 +13,6 @@ in HR zones is accumulated over those same moving segments via
 the UI can show HR-signal coverage honestly.
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -38,7 +37,7 @@ class LapSummary:
     """Aggregates for one moving segment (one FIT lap)."""
 
     index: int  # 1-based lap number
-    start_s: float  # offset from workout start (wall clock, seconds)
+    start_s: float  # offset from the canonical recording start, seconds
     active_time_s: float
     elapsed_time_s: float
     pause_after_s: float
@@ -55,16 +54,6 @@ class LapSummary:
     # UI can label rest vs. work laps instead of anonymous numbers.
     kind: str | None = None  # warmup | work | rest | cooldown | effort
     label: str | None = None  # e.g. "Work 10:00"
-
-    @property
-    def duration_s(self) -> float:
-        """Compatibility alias for active timer time."""
-        return self.active_time_s
-
-    @property
-    def elapsed_s(self) -> float:
-        """Compatibility alias for lap wall time."""
-        return self.elapsed_time_s
 
     @property
     def pause_time_s(self) -> float:
@@ -116,12 +105,6 @@ class WorkoutSummary:
         default_factory=list
     )
     series_time_bounds: tuple[float, float] = (0.0, 0.0)
-
-    @property
-    def duration_s(self) -> float:
-        """Compatibility alias for active timer time."""
-        return self.active_time_s
-
 
 def _lap_summary(
     index: int,
@@ -180,7 +163,7 @@ def compute_summary(
     max_hr: Any = 185,
     zones: list[int] | None = None,
     program_steps: list[dict[str, Any]] | None = None,
-    config: Mapping[str, Any] | None = None,
+    pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
 ) -> WorkoutSummary:
     """Compute a full workout summary from a workout Table.
 
@@ -194,9 +177,7 @@ def compute_summary(
             ``steps.json`` timeline; see ``segmentation.load_program_steps``).
             When present, laps follow the program steps exactly as the FIT
             exporter's do; otherwise laps come from movement detection.
-        config: Optional recorded processing configuration. Finalization is the
-            same path used by the FIT exporter, so on-screen splits and encoded
-            laps agree by construction.
+        pull_length_m: Recorded effective pull length used for estimated power.
 
     Raises:
         ValueError: If the table is empty.
@@ -207,11 +188,7 @@ def compute_summary(
     finalized = finalize_workout(table, program_steps=program_steps, logger=logger)
     if not finalized.segments:
         raise ValueError("Workout contains no active ergometer samples.")
-    pull_length_m = normalize_pull_length(
-        config.get("pull_length_m", DEFAULT_PULL_LENGTH_M)
-        if config is not None
-        else DEFAULT_PULL_LENGTH_M
-    )
+    pull_length_m = normalize_pull_length(pull_length_m)
     hrs = [to_float(v) for v in table.get_column("heart_rate")]
     power_cadences = [to_float(v) for v in table.get_column("cadence")]
     cadences = [to_float(v) for v in table.get_column("cadence_instant")]
@@ -279,13 +256,12 @@ def compute_summary(
     # Overall averages/peaks come from the finalized aggregate shared verbatim
     # with FIT session/lap messages.
     #
-    # avg_power is the time-average of the per-second power estimates (mean of
+    # avg_power is the represented-time average of per-sample power estimates (mean of
     # products). The machine display instead shows L x mean(force) x
     # mean(cadence) (product of means), which reads a few watts higher when
     # force and cadence co-vary — a small difference vs the display is
-    # expected. max_power is the highest one-second estimate; the display's
-    # "Max Power" is a sub-second within-stroke peak (~2.2x the mean) that a
-    # 1 Hz log cannot reproduce.
+    # expected. max_power is the highest recorded-sample estimate; the display's
+    # within-stroke peak is not available in the recorded channel.
     totals = finalized_metrics.session
 
     # ---- time in HR zones ----------------------------------------------------

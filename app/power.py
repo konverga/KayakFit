@@ -6,11 +6,10 @@ flywheel-based pull force and stroke rate. This module reproduces that model:
     power (W) = pull_force (N) x pull_length (m) x strokes_per_second
 
 Physics: work per stroke = force x pull distance (J); strokes per second =
-cadence / 60; power = J/s = W. The effective handle pull length was fitted
-against manually logged display values (2026-07-03 BULL session, 59 points):
-L = 0.623 m, RMSE 1.1 W, R² 0.89, 98% of points within ±5 W. The same L also
-reproduces the display's session Average Power, which the firmware computes
-as L x avg_force x avg_cadence / 60 (product of cumulative means).
+cadence / 60; power = J/s = W. The calibrated effective handle pull length is
+L = 0.623 m. It also reproduces the display's session Average Power, which the
+firmware computes as L x avg_force x avg_cadence / 60 (product of cumulative
+means).
 
 The pull length can be recalibrated for other KayakFirst models or firmware
 revisions (see docs/POWER_MODEL.md); callers pass the recorded
@@ -45,9 +44,9 @@ def estimate_power(
 ) -> int | None:
     """Estimate power (W) from pull force (N) and cadence (spm).
 
-    Prefer the stroke-averaged fields (``pull_force__n`` / ``cadence__spm``):
-    they track the machine's own power display to ~1 W RMSE, while the
-    instantaneous fields are single-stroke snapshots that deviate by ~25 W RMSE.
+    Prefer the stroke-averaged fields (``pull_force__n`` / ``cadence__spm``),
+    which align with the calibrated display model. The instantaneous fields are
+    single-stroke snapshots and are not inputs to this model.
 
     Returns None when either input is missing or non-numeric.
     """

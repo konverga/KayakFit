@@ -15,10 +15,10 @@ from typing import Any
 import customtkinter as ctk
 
 from app import secret_store
+from app.stats import zone_lower_bounds
 from app.strava_auth import StravaAuth
 from gui.config_manager import ConfigError, _extract_addr
 from gui.device_scanner import scan_devices, test_connection
-from gui.metrics_format import zone_lower_bounds
 from gui.window_utils import center_over_parent
 
 LogFn = Callable[[str], None]
