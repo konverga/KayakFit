@@ -71,8 +71,8 @@ _INITIAL_SPLIT_ROWS = 24
 _SPLIT_RENDER_BATCH_ROWS = 24
 _SPLIT_RENDER_DELAY_MS = 16
 _POWER_TOOLTIP = (
-    "Estimated power uses the ergometer's averaged pull force and stroke rate. "
-    "The cadence and pull-force charts show raw instantaneous sensor points."
+    "Estimated power uses the same instantaneous pull force and stroke rate "
+    "shown in the charts."
 )
 
 

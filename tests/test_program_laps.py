@@ -1,9 +1,10 @@
 """
-Tests for planned-step statistics and exact freestyle activity runs.
+Tests for planned-step statistics and natural freestyle laps.
 
 Plans define the step/lap structure. The ergometer's active signal selects the
 records used for each step's moving time and averages, so inactive rest remains
-visible without lowering HR/cadence/power. Free workouts use exact active runs.
+visible without lowering HR/cadence/power. Free workouts group exact active runs
+across brief inactive gaps so low cadence does not create one-second laps.
 
 Run from the project root:
 
@@ -21,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.finalized_workout import finalize_workout
+from app.segmentation import LiveSegmenter
 from app.summary import compute_summary
 from app.table import Table
 
@@ -733,3 +735,75 @@ def test_free_workout_uses_activity_based_laps() -> None:
     assert len(s.laps) == 2
     with pytest.raises(ValueError, match="non-empty"):
         compute_summary(table, program_steps=[])
+
+
+def test_free_workout_groups_short_inactivity_without_lowering_averages() -> None:
+    actives = [1, 1, 0, 0, 0, 0, 1, 1]
+    rows = []
+    distance = 0.0
+    for i, active in enumerate(actives):
+        if active:
+            distance += 3.0
+        rows.append(
+            {
+                "timestamp": T0 + (i + 1) * 1000,
+                "session_elapsed": i + 1,
+                "heart_rate": 140 if active else 60,
+                "cadence": 70 if active else 0,
+                "cadence_instant": 70 if active else 0,
+                "distance": distance,
+                "speed_instant": 3.0 if active else 0.0,
+                "pull_force": 180 if active else 0,
+                "pull_force_instant": 180 if active else 0,
+                "active": active,
+                "sample_duration": 1,
+            }
+        )
+
+    summary = compute_summary(Table(COLUMNS, rows))
+
+    assert len(summary.laps) == 1
+    assert summary.active_time_s == summary.laps[0].active_time_s == 4.0
+    assert summary.laps[0].elapsed_time_s == 8.0
+    assert summary.laps[0].avg_spm == 70.0
+    assert summary.laps[0].avg_hr == 140.0
+    assert summary.series_breaks == [True, False, False, False]
+    live = LiveSegmenter()
+    for active in actives:
+        live_state = live.update(active=active)
+    assert live_state["lap"] == len(summary.laps) == 1
+
+
+def test_free_workout_splits_at_exact_five_second_pause() -> None:
+    actives = [1, 1, 0, 0, 0, 0, 0, 1, 1]
+    rows = []
+    distance = 0.0
+    for i, active in enumerate(actives):
+        if active:
+            distance += 3.0
+        rows.append(
+            {
+                "timestamp": T0 + (i + 1) * 1000,
+                "session_elapsed": i + 1,
+                "heart_rate": 140,
+                "cadence": 70 if active else 0,
+                "cadence_instant": 70 if active else 0,
+                "distance": distance,
+                "speed_instant": 3.0 if active else 0.0,
+                "pull_force": 180 if active else 0,
+                "pull_force_instant": 180 if active else 0,
+                "active": active,
+                "sample_duration": 1,
+            }
+        )
+
+    summary = compute_summary(Table(COLUMNS, rows))
+
+    assert len(summary.laps) == 2
+    assert [lap.active_time_s for lap in summary.laps] == [2.0, 2.0]
+    assert summary.active_time_s == 4.0
+    assert summary.series_breaks == [True, False, True, False]
+    live = LiveSegmenter()
+    for active in actives:
+        live_state = live.update(active=active)
+    assert live_state["lap"] == len(summary.laps) == 2

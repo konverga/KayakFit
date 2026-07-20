@@ -84,9 +84,9 @@ def test_totals_and_series():
     assert abs(lap0_avg_speed - 2.5) < 1e-6
     assert abs(s.avg_hr - 150.0) < 1e-6
     assert s.max_hr == 150
-    # power = 100 N * 0.623 m * 60 spm / 60 = 62.3 -> rounds to 62 W
-    assert s.avg_power is not None and abs(s.avg_power - 62.0) < 1e-6
-    assert s.max_power == 62
+    # power = 100 N * 0.600 m * 60 spm / 60 = 60 W
+    assert s.avg_power is not None and abs(s.avg_power - 60.0) < 1e-6
+    assert s.max_power == 60
     # Series lengths all match record count.
     assert (
         len(s.series_t)

@@ -55,8 +55,8 @@ does not imply that every current code path satisfies it perfectly.
   session/lap aggregate set consumed verbatim by FIT and summary;
   `app.stats.aggregate_metrics()` defines each slice's arithmetic.
 - **Rules:**
-  - HR, instantaneous cadence, and estimated power average only valid positive
-    readings.
+  - HR, instantaneous cadence, and instantaneous-input estimated power average
+    only valid positive readings.
   - These averages use canonical represented sample duration.
   - Average speed is the represented-time-weighted mean of valid active
     `speed_instant` readings (see D017).
@@ -100,14 +100,17 @@ does not imply that every current code path satisfies it perfectly.
 - **Status:** Accepted
 - **Decision:** Activity selection is independent of the plan. After active
   records are selected:
-  - free workouts use every exact active run as one lap;
+  - free workouts group exact active runs across gaps shorter than the fixed
+    five-second meaningful-pause delay;
   - planned workouts group records by performed warm-up/work/rest/cooldown step.
 - **Rationale:** A plan describes user-facing structure, not permission to count
-  idle samples. Conversely, movement pauses should not fragment a planned work
-  step into meaningless one-second laps.
+  idle samples. At low cadence the ergometer can briefly clear its activity flag
+  between strokes, which must not create one-second free laps. Conversely,
+  movement pauses should not fragment a planned work step into meaningless laps.
 - **Consequences:** Planned splits show elapsed and active time separately. A
-  fully inactive rest remains visible with blank averages. The live free-lap
-  indicator is hidden during planned workouts.
+  fully inactive rest remains visible with blank averages. Free-lap elapsed time
+  may include short inactive gaps, while active time and averages remain exact.
+  The live free-lap indicator is hidden during planned workouts.
 
 ## D007 — Per-workout metadata makes historical processing reproducible
 
@@ -130,14 +133,17 @@ does not imply that every current code path satisfies it perfectly.
 - **Decision:** Use
   `power_W = pull_force_N × pull_length_m × cadence_spm / 60` through
   `app.power.estimate_power()`.
-- **Default calibration:** `pull_length_m = 0.623`, constrained to 0.3–1.2 m.
-- **Rationale:** The ergometer does not expose a dedicated power sensor field;
-  the calibrated model tracks its display closely with stroke-averaged inputs.
+- **Default calibration:** `pull_length_m = 0.600`, constrained to 0.3–1.2 m.
+- **Rationale:** The ergometer does not expose a dedicated power sensor field.
+  Using instantaneous force and cadence keeps every surface tied to the same
+  recorded points; 0.600 slightly lowers estimates from the former 0.623
+  calibration.
 - **Consequences:** KayakFit's maximum is a highest one-second estimate, not the
   ergometer display's within-stroke peak. Calibration details live in
   [POWER_MODEL.md](POWER_MODEL.md).
 - **Consequences:** Pull length is passed explicitly to live metrics, summary,
-  and FIT processing. There is no process-global calibration state.
+  and FIT processing. There is no process-global calibration state. Historical
+  workout metadata remains unchanged.
 
 ## D009 — Derived FIT measurements require an explicit source and purpose
 
@@ -269,17 +275,16 @@ does not imply that every current code path satisfies it perfectly.
 - **Status:** Accepted
 - **Decision:** There is no global metric-source setting. Summary and FIT use
   instantaneous protocol points for speed and cadence, and the summary uses
-  instantaneous pull force. The main-window cards and planned target feedback
-  consistently use averaged speed, pace, cadence, and pull force. Estimated
-  power is the sole finalized exception: it always uses averaged cadence and
-  force with the recorded pull-length calibration. Heart rate and distance each
-  have one source field.
+  instantaneous pull force. The main-window cards, their average/max previews,
+  and planned target feedback consistently use instantaneous speed, pace,
+  cadence, and pull force without an averaged-field fallback. Live and
+  finalized power both use instantaneous force and cadence with the recorded
+  pull-length calibration. Heart rate and distance each have one source field.
 - **Rationale:** Workout review and export retain the recorded instantaneous
-  sensor points. Power keeps its calibrated averaged inputs because
-  instantaneous force and cadence make that model substantially less accurate.
-  Explicit presentation and finalization policies keep each surface internally
-  consistent without a hidden processing preference.
-- **Consequences:** Every main-window sensor card and its secondary average/max
-  use averaged device fields. Summary graphs, aggregates, and FIT records use
-  instantaneous sensor channels except for averaged-input power. Changing app
-  settings cannot reinterpret a workout's metric channels.
+  sensor points, and physical testing showed that averaged protocol fields make
+  the live cards read lower than the ergometer display. A single instantaneous
+  live policy keeps cards, previews, and target feedback internally consistent.
+- **Consequences:** Main-window sensor cards and their secondary average/max use
+  instantaneous device fields. Summary graphs, aggregates, and FIT records use
+  the same instantaneous sensor channels. Changing app settings cannot
+  reinterpret a workout's metric channels.

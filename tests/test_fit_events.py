@@ -84,7 +84,7 @@ class RecordingBuilder:
 
 def _make_exporter():
     exporter = FitExporter.__new__(FitExporter)
-    exporter.pull_length_m = 0.623
+    exporter.pull_length_m = 0.600
 
     class _DummyLogger:
         def info(self, msg=""):

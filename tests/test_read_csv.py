@@ -91,8 +91,8 @@ def test_parse_types_and_shape() -> None:
         assert t.columns == [
             "timestamp", "session_elapsed", "sample_duration",
             "device_elapsed", "device_window", "kayakfirst_timestamp",
-            "heart_rate", "cadence", "cadence_instant", "distance",
-            "speed_instant", "pull_force", "pull_force_instant", "active",
+            "heart_rate", "cadence_instant", "distance", "speed_instant",
+            "pull_force_instant", "active",
         ]
         assert t.height == 5
         assert isinstance(t.get_column("timestamp")[0], int)
@@ -129,10 +129,10 @@ def test_canonical_metric_channels_are_fixed() -> None:
         table = CsvReader(str(p)).read_all()
 
         assert table.get_column("speed_instant") == [Decimal("3.25")]
-        assert table.get_column("cadence") == [60]
         assert table.get_column("cadence_instant") == [90]
-        assert table.get_column("pull_force") == [100]
         assert table.get_column("pull_force_instant") == [200]
+        assert "cadence" not in table
+        assert "pull_force" not in table
 
 
 def test_stationary_rows_are_preserved() -> None:

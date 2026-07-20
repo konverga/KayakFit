@@ -14,9 +14,9 @@ workout and one aggregate result. Within KayakFit:
 - session active time equals the sum of lap active times;
 - paused intervals never lower speed, heart-rate, cadence, or power averages;
 - average speed is no greater than maximum speed when speed is available;
-- chart, summary, and FIT use recorded instantaneous sensor points, except
-  estimated power, which uses stroke-averaged cadence and pull force;
-- main-window sensor cards consistently use averaged device fields;
+- chart, summary, and FIT use recorded instantaneous sensor points, including
+  estimated power derived from instantaneous cadence and pull force;
+- main-window sensor cards consistently use instantaneous device fields;
 - decoded FIT session/lap metrics match the summary, subject to FIT precision.
 
 Strava is outside this guarantee. It can recalculate moving time, distance, and
@@ -106,9 +106,16 @@ Heart-rate notifications never create records or extend time.
 
 Every exact `0 -> 1` transition begins a new active run. Every exact `1 -> 0`
 transition closes it. An uncovered interval also closes a run, even when the
-next row is active. There is no debounce or configurable gap threshold. The
-same rules drive the live pause indicator, free laps, chart breaks, and FIT
-timer events. Zero-duration observations belong to no active run.
+next row is active. Exact runs drive active time, metrics, distance attribution,
+and FIT timer events. Zero-duration observations belong to no active run.
+
+Free-workout presentation applies a fixed five-second meaningful-pause delay.
+The live pause indicator, lap counter, free laps, and free-workout chart breaks
+only split after at least five continuous canonical seconds without activity.
+Shorter gaps remain inside one lap but their inactive samples still contribute
+neither active time nor metric averages. The threshold uses elapsed duration,
+not record count, and is not configurable. Planned laps continue to follow the
+performed program steps.
 
 ## 3. Active distance
 
@@ -153,12 +160,13 @@ Finalized metric sources are fixed: speed always uses the retained
 instantaneous column. There is no processing-mode setting.
 
 The main workout dashboard is a live presentation surface, not a finalized
-workout aggregate. Its speed, pace, cadence, pull-force, and power cards use the
-ergometer's averaged fields. Each card's secondary average/max is accumulated
-from the same field as its primary value. Sensor-card headings are explicitly
-labelled `Live` so these values are not mistaken for finalized statistics. This
-does not change the recorded instantaneous speed used by the graph, summary, or
-FIT file.
+workout aggregate. Its speed, pace, cadence, and pull-force cards use only the
+ergometer's instantaneous fields; live estimated power uses instantaneous force
+and cadence. Each card's secondary average/max and planned-target feedback use
+the same instantaneous sources as the primary value. There is no fallback to an
+averaged field. Sensor-card headings are explicitly labelled `Live` so these
+values are not mistaken for finalized statistics. Finalized power uses those
+same instantaneous inputs.
 
 ### Why speed is not distance / active time
 
@@ -189,25 +197,28 @@ recorded instantaneous protocol fields. Heart rate has one recorded source.
 - Maximum is the largest valid active reading.
 - Missing-HR active time remains visible as `No HR signal` in the zone chart.
 
-Power is the sole averaged-channel exception. It is estimated per record:
+Power is estimated at every retained record:
 
 ```text
 power W = pull force N * configured pull length m * cadence spm / 60
 ```
 
-For this formula, cadence and pull force use the ergometer's stroke-averaged
-fields because that is the calibrated model. Lap/session average power is the
-active-time-weighted mean of those per-record estimates, not the product of
-whole-lap/session average force and cadence. The saved pull length makes
-historical power processing reproducible; no metric-source preference is
-needed.
+Cadence and pull force use `cadence_instant__spm` and
+`pull_force_instant__n` from the same ergometer packet. Lap/session average
+power is the active-time-weighted mean of those per-record estimates, not the
+product of whole-lap/session averages. Maximum power is the largest valid
+instantaneous-point estimate. The saved pull length makes historical power
+processing reproducible; no metric-source preference is needed.
 
 ## 6. Free-workout laps
 
-Each exact contiguous active run is one free-workout lap and one FIT timer run.
-Inactive rows are not lap records and do not enter averages. A pause appears as
-the gap between one lap end and the next lap start. An inactive recording prefix
-or tail remains part of session elapsed time and the graph bounds.
+Each exact contiguous active run remains one FIT timer run. For presentation,
+consecutive runs separated by less than five inactive seconds are grouped into
+one free-workout lap. A gap of five seconds or more starts a new lap when
+activity resumes. Inactive rows are not lap records and do not enter averages;
+a grouped lap can therefore have more elapsed time than active time without its
+averages being lowered. An inactive recording prefix or tail remains part of
+session elapsed time and the graph bounds.
 
 ## 7. Planned-workout laps
 
@@ -240,8 +251,8 @@ The generated FIT contains:
 - one sensor record per positive-duration active CSV window;
 - active-only cumulative distance;
 - unsmoothed recorded instantaneous speed and cadence;
-- valid active HR and estimated power derived from averaged cadence/force;
-- exact-run free laps or performed-step planned laps;
+- valid active HR and estimated power derived from instantaneous cadence/force;
+- meaningful-pause free laps or performed-step planned laps;
 - complete session elapsed time and active timer time;
 - lap/session distance, averages, maxima, and one activity summary.
 

@@ -36,7 +36,7 @@ handoff.
 | Planned-step laps and sample attribution | `tests/test_program_laps.py` |
 | Shared metric aggregation | `tests/test_stats.py` |
 | Summary timing, series, and HR zones | `tests/test_summary.py`, `tests/test_hr_zones.py` |
-| Averaged live-card metric policy | `tests/test_metrics_format.py` |
+| Instantaneous live-card metric policy | `tests/test_metrics_format.py` |
 | Encoded FIT/summary parity | `tests/test_pipeline.py` |
 | Recovery marker behavior | `tests/test_recovery.py` |
 | Worker outcomes, atomic state and strict configuration | `tests/test_reliability.py` |
@@ -113,7 +113,8 @@ Suggested smoke flow:
 
 1. Launch from a clean user configuration.
 2. Complete or revisit device setup and scan for peripherals.
-3. Start a free workout and verify active/paused transitions.
+3. Start a free workout and verify brief low-cadence gaps stay in one lap while
+   five continuous inactive seconds trigger the paused state.
 4. Stop paddling while HR continues; confirm no HR tail extends the result.
 5. Run a short planned workout containing warm-up, work, rest, and cooldown.
 6. Verify live step cues, exact step changes, summary splits, and graphs.

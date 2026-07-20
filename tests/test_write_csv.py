@@ -45,7 +45,7 @@ def test_session_reserves_unique_workout_directory_without_overwrite() -> None:
         config = {
             "output_dir": "workouts",
             "log_level": "warning",
-            "pull_length_m": 0.623,
+            "pull_length_m": 0.600,
             "max_hr": 185,
             "hr_zone_mode": "auto",
             "hr_zones": [],

@@ -12,7 +12,7 @@ from gui.recording_lifecycle import _remove_workout_directory, _retry_readonly_r
 
 def _write_metadata(csv_path: Path, mode: str) -> None:
     processing_config = {
-        "pull_length_m": 0.623,
+        "pull_length_m": 0.600,
         "max_hr": 185,
         "hr_zone_mode": "auto",
         "hr_zones": [],

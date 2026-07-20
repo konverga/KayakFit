@@ -1,9 +1,9 @@
 """Shared activity-run detection.
 
 A workout is split into *segments* (continuous moving periods) separated by
-*stationary* periods. These exact runs own FIT timer events and free-workout
-laps. ``app.finalized_workout`` groups them into performed steps for a planned
-workout.
+*stationary* periods. These exact runs own FIT timer events.
+``app.finalized_workout`` groups them across brief gaps for free-workout laps
+or into performed steps for a planned workout.
 
   * ``LiveSegmenter`` is the online form used by the live workout session to
     drive the dashboard's "Paused" indicator and lap counter in real time.
@@ -25,6 +25,12 @@ from typing import Any
 
 from .coerce import to_float
 from .workout_paths import WorkoutPaths
+
+# A free workout only presents a pause/lap boundary after this much continuous
+# inactivity. Exact activity runs remain unchanged for timer time and metrics.
+# Using elapsed time instead of packet count keeps the behavior stable when an
+# ergometer row represents more than the nominal one-second polling interval.
+MEANINGFUL_PAUSE_SECONDS = 5.0
 
 
 def detect_segments(
@@ -185,8 +191,9 @@ def resolve_segments(
 class LiveSegmenter:
     """Online free-workout pause/lap presenter fed one record at a time.
 
-    Every activity-flag transition is reflected immediately, matching finalized
-    free-workout laps and FIT timer boundaries.
+    Exact activity transitions still own finalized timer time. Presentation is
+    debounced so brief inactive flags between low-cadence strokes do not flicker
+    the dashboard or create one-second free-workout laps.
     """
 
     def __init__(
@@ -206,6 +213,7 @@ class LiveSegmenter:
         self.paused = False
         self.lap = 0
         self._moving_started = False
+        self._stationary_s = 0.0
 
     def _advance_lap(self) -> None:
         """Count the active segment just closed."""
@@ -215,6 +223,7 @@ class LiveSegmenter:
         self,
         *,
         active: Any,
+        sample_duration_s: Any = 1,
         gap_before_s: Any = 0,
     ) -> dict[str, Any]:
         """Feed one record and return the current state.
@@ -229,16 +238,20 @@ class LiveSegmenter:
             raise ValueError("Live v1 workout requires an activity signal")
         transition: str | None = None
 
+        duration = to_float(sample_duration_s)
         gap = to_float(gap_before_s)
-        if gap is None or gap < 0:
-            raise ValueError("Live v1 workout requires a valid canonical gap")
-        if gap > 0 and self._moving_started and not self.paused:
-            self.paused = True
-            transition = "pause"
+        if duration is None or duration < 0 or gap is None or gap < 0:
+            raise ValueError("Live v1 workout requires valid canonical timing")
 
         stationary = current_active <= 0
         if stationary:
-            if not self.paused and self._moving_started:
+            if self._moving_started and not self.paused:
+                self._stationary_s += gap + duration
+            if (
+                self._stationary_s >= MEANINGFUL_PAUSE_SECONDS
+                and not self.paused
+                and self._moving_started
+            ):
                 self.paused = True
                 transition = "pause"
         else:
@@ -246,10 +259,19 @@ class LiveSegmenter:
                 self.paused = False
                 self._advance_lap()
                 transition = "resume"
+            elif (
+                self._moving_started
+                and self._stationary_s + gap >= MEANINGFUL_PAUSE_SECONDS
+            ):
+                # No packet arrived while a long uncovered gap was in progress,
+                # so the first observable transition is the resumed state.
+                self._advance_lap()
+                transition = "resume"
             elif not self._moving_started:
                 self._moving_started = True
                 self.lap = 1
                 transition = "start"
+            self._stationary_s = 0.0
 
         result = {"paused": self.paused, "lap": self.lap, "transition": transition}
         if transition is not None and self.on_event is not None:

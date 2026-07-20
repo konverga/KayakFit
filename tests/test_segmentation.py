@@ -43,14 +43,34 @@ def test_missing_or_invalid_activity_is_rejected() -> None:
         detect_segments(active_col=[True], record_windows_ms={0: (0, 1000)})
 
 
-def test_live_pause_matches_each_activity_transition() -> None:
+def test_live_short_inactivity_does_not_pause_or_advance_lap() -> None:
     segmenter = LiveSegmenter()
     transitions = []
-    for active in [1, 1, 0, 0, 1, 0, 0, 0, 1]:
+    for active in [1, 0, 1, 0, 0, 0, 0, 1]:
         state = segmenter.update(active=active)
         if state["transition"]:
             transitions.append(state["transition"])
-    assert transitions == ["start", "pause", "resume", "pause", "resume"]
+    assert transitions == ["start"]
+    assert state == {"paused": False, "lap": 1, "transition": None}
+
+
+def test_live_pause_requires_five_canonical_seconds() -> None:
+    segmenter = LiveSegmenter()
+    states = [segmenter.update(active=1)]
+    states.extend(segmenter.update(active=0) for _ in range(5))
+    states.append(segmenter.update(active=1))
+
+    assert [state["transition"] for state in states] == [
+        "start", None, None, None, None, "pause", "resume"
+    ]
+    assert states[-1] == {"paused": False, "lap": 2, "transition": "resume"}
+
+
+def test_live_pause_uses_sample_duration_not_packet_count() -> None:
+    segmenter = LiveSegmenter()
+    segmenter.update(active=1)
+    paused = segmenter.update(active=0, sample_duration_s=5)
+    assert paused == {"paused": True, "lap": 1, "transition": "pause"}
 
 
 def test_live_missing_activity_is_rejected() -> None:
@@ -63,3 +83,10 @@ def test_live_gap_starts_a_new_lap_without_inflating_time() -> None:
     assert segmenter.update(active=1)["lap"] == 1
     resumed = segmenter.update(active=1, gap_before_s=30)
     assert resumed == {"paused": False, "lap": 2, "transition": "resume"}
+
+
+def test_live_short_gap_stays_in_current_lap() -> None:
+    segmenter = LiveSegmenter()
+    assert segmenter.update(active=1)["lap"] == 1
+    continued = segmenter.update(active=1, gap_before_s=4.999)
+    assert continued == {"paused": False, "lap": 1, "transition": None}

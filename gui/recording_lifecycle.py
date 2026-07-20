@@ -88,8 +88,8 @@ class RecordingLifecycleMixin(_MixinBase):
         self._last_data_ts = now
         self._latest_data = data
 
-        # Running card statistics use the same averaged channels as their main
-        # values. Idle packets and zero-duration observations own no card time.
+        # Running card statistics use the same instantaneous channels as their
+        # main values. Idle packets and zero-duration observations own no card time.
         try:
             weight = float(data.get("sample_duration__s", 0))
         except (TypeError, ValueError):
@@ -97,8 +97,8 @@ class RecordingLifecycleMixin(_MixinBase):
         if weight <= 0:
             weight = 0.0
         # Active time/distance use the shared finalization tracker. Its
-        # instantaneous speed input is not shown on the averaged speed card.
-        # Idle packets advance only the odometer baseline, so totals converge.
+        # instantaneous speed input is also shown on the live speed card. Idle
+        # packets advance only the odometer baseline, so totals converge.
         self._live_speed.update(
             distance_m=data.get("distance__m"),
             duration_s=weight,
@@ -168,7 +168,7 @@ class RecordingLifecycleMixin(_MixinBase):
         self._refresh_pace()
 
     def _raw_metric(self, key: str, data: dict[str, Any]) -> float | None:
-        """Extract a card value in display units from its averaged channel."""
+        """Extract a card value in display units from its instantaneous channel."""
         return metric_value(
             key,
             data,

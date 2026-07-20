@@ -7,7 +7,7 @@ and reused by any front end.
 from typing import Any
 
 from app import stats
-from app.power import estimate_power
+from app.power import DEFAULT_PULL_LENGTH_M, estimate_power
 
 
 def fmt_time(seconds: Any) -> str:
@@ -78,12 +78,12 @@ def zone_range(
 
 
 def format_pace(data: dict[str, Any], distance_m: int) -> str | None:
-    """Format the ergometer's averaged pace for a competition distance.
+    """Format the ergometer's instantaneous pace for a competition distance.
 
     Returns an ``m:ss`` string, ``"—"`` when out of range, or None if the field
     is absent.
     """
-    field = f"pace_{int(distance_m)}m__s"
+    field = f"pace_{int(distance_m)}m_instant__s"
     value = data.get(field)
     if value is None:
         return None
@@ -95,24 +95,26 @@ def format_pace(data: dict[str, Any], distance_m: int) -> str | None:
 
 
 def compute_power(
-    data: dict[str, Any], pull_length_m: Any = 0.623
+    data: dict[str, Any], pull_length_m: Any = DEFAULT_PULL_LENGTH_M
 ) -> int | None:
-    """Estimate power from the calibrated averaged force/cadence channels."""
+    """Estimate live power from instantaneous force/cadence channels."""
     return estimate_power(
-        data.get("pull_force__n"), data.get("cadence__spm"), pull_length_m
+        data.get("pull_force_instant__n"),
+        data.get("cadence_instant__spm"),
+        pull_length_m,
     )
 
 
 def metric_value(
     key: str,
     data: dict[str, Any],
-    pull_length_m: Any = 0.623,
+    pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
 ) -> float | None:
-    """Return one main-window value using averaged ergometer channels."""
+    """Return one main-window value using instantaneous ergometer channels."""
     field_by_key = {
-        "speed": "speed__mps",
-        "stroke": "cadence__spm",
-        "pull": "pull_force__n",
+        "speed": "speed_instant__mps",
+        "stroke": "cadence_instant__spm",
+        "pull": "pull_force_instant__n",
         "hr": "heart_rate__bpm",
     }
     if key == "power":
@@ -129,7 +131,7 @@ def metric_value(
 
 
 def format_metrics(
-    data: dict[str, Any], pull_length_m: Any = 0.623
+    data: dict[str, Any], pull_length_m: Any = DEFAULT_PULL_LENGTH_M
 ) -> dict[str, str]:
     """Map a raw sensor-sample dictionary to display strings keyed by tile id."""
     out: dict[str, str] = {}
@@ -155,7 +157,7 @@ def target_value(
     data: dict[str, Any],
     max_hr: Any = 185,
     zones: list[int] | None = None,
-    pull_length_m: Any = 0.623,
+    pull_length_m: Any = DEFAULT_PULL_LENGTH_M,
 ) -> float | None:
     """Extract the current value for a target metric from a live data dict.
 
@@ -169,7 +171,7 @@ def target_value(
         zone = hr_zone(hr, max_hr, zones)
         return float(zone + 1) if zone >= 0 else None
     if metric in _PACE_DISTANCES:
-        pace_field = f"pace_{_PACE_DISTANCES[metric]}m__s"
+        pace_field = f"pace_{_PACE_DISTANCES[metric]}m_instant__s"
         value = data.get(pace_field)
         try:
             secs = float(value) if value is not None else None
@@ -181,7 +183,7 @@ def target_value(
         power = compute_power(data, pull_length_m)
         return float(power) if power is not None else None
     if metric == "spm":
-        value = data.get("cadence__spm")
+        value = data.get("cadence_instant__spm")
         return float(value) if value is not None else None
     return None
 

@@ -105,7 +105,7 @@ class KayakFitGUI(
         self._tiles_dimmed = False
         self._stats: dict[str, dict[str, Any]] = {}
         # Active time/distance tracker; finalized speed remains available for
-        # reconciliation but dashboard speed cards use averaged device fields.
+        # reconciliation and dashboard speed cards use instantaneous device fields.
         self._live_speed = LiveSpeedTracker()
 
         # Liveness / staleness timing (monotonic seconds).

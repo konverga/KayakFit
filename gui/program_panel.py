@@ -289,7 +289,7 @@ class ProgramPanelMixin(_MixinBase):
             # always lands ~warn_s before the finish; fall back to a fixed
             # distance when we have no usable speed reading.
             try:
-                speed = float(self._latest_data.get("speed__mps"))
+                speed = float(self._latest_data.get("speed_instant__mps"))
             except (TypeError, ValueError):
                 speed = 0.0
             threshold = (

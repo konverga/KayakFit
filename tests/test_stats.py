@@ -42,10 +42,10 @@ def test_positive_filtering_and_avg_speed():
     assert m["avg_heart_rate"] == 150.0, m["avg_heart_rate"]
     assert m["max_heart_rate"] == 150.0
     assert m["avg_cadence"] == 60.0, m["avg_cadence"]
-    # power = 100 * 0.623 * 60 / 60 = 62.3 -> 62 for the moving rows; the
-    # cadence-0 rows estimate 0 W and are excluded.
-    assert m["avg_power"] == 62.0, m["avg_power"]
-    assert m["max_power"] == 62.0
+    # power = 100 * 0.600 * 60 / 60 = 60 W for the moving rows; the cadence-0
+    # rows estimate 0 W and are excluded.
+    assert m["avg_power"] == 60.0, m["avg_power"]
+    assert m["max_power"] == 60.0
     # Peak speed over positive samples.
     assert m["max_speed"] == 2.5
     # Speed is reproduced directly from the recorded samples.
@@ -97,8 +97,8 @@ def test_sensor_averages_are_weighted_by_sample_window():
     )
     assert metrics["avg_heart_rate"] == 175.0
     assert metrics["avg_cadence"] == 87.5
-    # Power estimates are 52 W and 104 W with the configured pull length.
-    assert metrics["avg_power"] == 91.0
+    # Power estimates are 50 W and 100 W with the configured pull length.
+    assert metrics["avg_power"] == 87.5
     print("test_sensor_averages_are_weighted_by_sample_window passed")
 
 
@@ -144,8 +144,8 @@ def test_finalized_summary_excludes_dropouts():
     # Cadence: summary reports avg_spm, exporter avg_cadence; both exclude 0s.
     assert summary.avg_spm == 60.0
 
-    # Power: 62 W on both sides (drop rows estimate 0 W and are excluded).
-    assert summary.avg_power == 62.0
+    # Power: 60 W on both sides (drop rows estimate 0 W and are excluded).
+    assert summary.avg_power == 60.0
 
     # Constant recorded speed remains 2.5 m/s.
     assert summary.avg_speed_mps is not None

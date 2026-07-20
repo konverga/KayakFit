@@ -5,7 +5,11 @@ from math import floor, isfinite
 from typing import Any
 
 from .active_distance import ActiveDistanceAccumulator
-from .segmentation import program_step_bounds, resolve_segments
+from .segmentation import (
+    MEANINGFUL_PAUSE_SECONDS,
+    program_step_bounds,
+    resolve_segments,
+)
 from .table import Table
 
 
@@ -48,7 +52,8 @@ class FinalizedWorkout:
     segments: tuple[ActivitySegment, ...]
     # Presentation/FIT lap groups. A lap can contain multiple active runs.
     laps: tuple[FinalizedLap, ...]
-    # Row indices where chart lines restart (every active run).
+    # Row indices where chart lines restart (meaningful free-lap boundaries or
+    # every exact active run for planned workouts).
     chart_break_indices: tuple[int, ...]
     moving_indices: tuple[int, ...]
     # Active-only cumulative distance written to each FIT record. Missing raw
@@ -300,21 +305,45 @@ def _build_planned_laps(
     return laps
 
 
+def _group_free_segments(
+    segments: list[ActivitySegment],
+) -> list[list[ActivitySegment]]:
+    """Group exact runs by the shared meaningful-pause boundary."""
+    groups: list[list[ActivitySegment]] = []
+    pause_threshold_ms = round(MEANINGFUL_PAUSE_SECONDS * 1000)
+    for segment in segments:
+        if not groups:
+            groups.append([segment])
+            continue
+        previous = groups[-1][-1]
+        inactive_ms = segment.start_time_ms - previous.end_time_ms
+        if inactive_ms < pause_threshold_ms:
+            groups[-1].append(segment)
+        else:
+            groups.append([segment])
+    return groups
+
+
 def _build_free_laps(
     segments: list[ActivitySegment],
     record_timer_ms: dict[int, int],
     record_distance_m: dict[int, float | None],
 ) -> list[FinalizedLap]:
-    """Create one free-workout lap for every exact active run."""
+    """Group exact runs separated by less than one meaningful free pause."""
+    groups = _group_free_segments(segments)
+
     laps: list[FinalizedLap] = []
-    for segment in segments:
-        indices = segment.record_indices
+    for group in groups:
+        first, last = group[0], group[-1]
+        indices = tuple(
+            index for segment in group for index in segment.record_indices
+        )
         laps.append(FinalizedLap(
-            start_idx=segment.start_idx,
-            end_idx=segment.end_idx,
-            start_time_ms=segment.start_time_ms,
-            end_time_ms=segment.end_time_ms,
-            timer_time_ms=segment.timer_time_ms,
+            start_idx=first.start_idx,
+            end_idx=last.end_idx,
+            start_time_ms=first.start_time_ms,
+            end_time_ms=last.end_time_ms,
+            timer_time_ms=sum(segment.timer_time_ms for segment in group),
             record_indices=indices,
             record_weights_s=tuple(
                 record_timer_ms.get(index, 0) / 1000.0 for index in indices
@@ -326,9 +355,13 @@ def _build_free_laps(
 
 def _chart_breaks(
     segments: list[ActivitySegment],
+    *,
+    planned: bool,
 ) -> set[int]:
-    """Break chart lines at every inactive interval or free-lap boundary."""
-    return {segment.start_idx for segment in segments}
+    """Break planned charts at exact runs and free charts at natural laps."""
+    if planned:
+        return {segment.start_idx for segment in segments}
+    return {group[0].start_idx for group in _group_free_segments(segments)}
 
 
 def _conserve_lap_totals(
@@ -432,7 +465,7 @@ def finalize_workout(
         laps = _build_free_laps(
             segments, record_timer_ms, record_distance_m
         )
-    chart_breaks = _chart_breaks(segments)
+    chart_breaks = _chart_breaks(segments, planned=planned_laps)
     timer_ms = sum(segment.timer_time_ms for segment in segments)
     elapsed_ms = timeline_end_ms - timeline_start_ms
     laps = _conserve_lap_totals(laps, timer_ms, total_distance, planned_laps)

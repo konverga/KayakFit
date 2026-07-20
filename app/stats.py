@@ -198,9 +198,8 @@ def aggregate_metrics(
             0 readings are treated as no signal).
         cadence: per-record instantaneous cadence readings (same missing/zero
             handling).
-        power_cadence: per-record stroke-averaged cadence used only for power.
-        power_pull_force: per-record stroke-averaged pull force used only for
-            power.
+        power_cadence: per-record instantaneous cadence used for power.
+        power_pull_force: per-record instantaneous pull force used for power.
         speed: per-record instantaneous speed readings. Average speed is
             time-weighted; maximum speed is the largest valid reading.
         sample_weights: Represented seconds per sensor sample. HR, cadence,

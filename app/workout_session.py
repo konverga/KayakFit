@@ -103,8 +103,8 @@ class WorkoutSession:
         self.prompt_callback = prompt_callback
         self._streaming_announced = False
 
-        # Every activity-flag transition is reflected immediately so the live
-        # pause state and free-lap count match finalization.
+        # Brief inactive flags are debounced so the live pause state and
+        # free-lap count match finalized natural laps at low cadence.
         self.segmenter = LiveSegmenter()
 
         # Optional structured training program driven off elapsed time / distance.
@@ -795,6 +795,7 @@ class WorkoutSession:
         # Live autopause / lap detection, mirroring the FIT exporter's rules.
         seg = self.segmenter.update(
             active=data.get("active_paddling"),
+            sample_duration_s=timing.sample_duration_s,
             gap_before_s=timing.gap_before_s,
         )
         if seg["transition"] is not None:

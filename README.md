@@ -11,14 +11,15 @@ Runs on **macOS** and **Windows**.
 
 ## Features
 
-- **Live dashboard** — time, distance, speed, pace (200/500/1000 m), stroke rate,
-  heart rate, pull force and estimated power, updated once per second.
+- **Live dashboard** — time, distance, instantaneous speed, pace, stroke rate,
+  pull force and estimated power, plus heart rate, updated once per second.
 - **Heart‑rate zones** — colored zones with bpm ranges, derived from your max HR
   or set manually.
-- **Auto‑pause & laps** — recording pauses automatically when you stop and resumes
-  when you move again; each effort becomes a lap in the FIT file. When you run a
-  **structured program**, the FIT laps follow the program steps instead, so each
-  interval (warm‑up, work, rest…) shows up as its own lap on Strava.
+- **Auto‑pause & laps** — the live pause state and free-lap boundary require
+  five continuous seconds without movement; each meaningful effort becomes a
+  lap in the FIT file. When you run a **structured program**, the FIT laps
+  follow the program steps instead, so each interval (warm‑up, work, rest…)
+  shows up as its own lap on Strava.
 - **Structured training programs** — run interval sessions (e.g. *4 × 500 m /
   1:00 rest*) with a live step panel, countdowns, and audible cues on each phase
   change.
@@ -26,8 +27,8 @@ Runs on **macOS** and **Windows**.
   speed, power, heart rate, cadence and pull force on one shared time axis
   (pick the metrics you want, hover for exact values), time in HR zones, and
   per‑lap splits.
-- **Estimated power** — the ergometer has no power sensor; KayakFit reproduces
-  the machine display's power model.
+- **Estimated power** — the ergometer has no power sensor; KayakFit applies its
+  power model to each instantaneous force/cadence point.
 - **Strava upload** — convert to FIT and upload automatically or on demand. FIT
   records map active ergometer distance onto a fixed Hazewinkel course so
   Strava can infer pauses from stationary positions in its overview.
@@ -121,7 +122,7 @@ Settings to remove it from the keychain.
 On stop, the workout is saved as CSV + FIT and (if enabled) uploaded to Strava.
 
 **During the workout you’ll also see:**
-- a **⏸ Paused** badge and dimmed tiles during an auto‑pause,
+- a **⏸ Paused** badge and dimmed tiles after five seconds of continuous inactivity,
 - a **Lap N** counter,
 - the **program panel** (if running a program) with the current step, a
   countdown to the next phase, the next step, and two progress bars — one for
@@ -272,8 +273,8 @@ The complete Strava authorization is kept in the OS keychain, not in
 Settings to remove it.
 
 One tuning value worth knowing about: `pull_length_m` in `config.yml` is the
-effective handle pull length used by the power model (default `0.623`, fitted
-against the machine display). If your machine or firmware reads differently,
+effective handle pull length used by the power model (default `0.600`, applied
+to instantaneous force and cadence). If your machine or firmware reads differently,
 it can be refitted — the procedure is described in
 [`docs/POWER_MODEL.md`](docs/POWER_MODEL.md).
 

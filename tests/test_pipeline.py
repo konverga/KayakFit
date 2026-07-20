@@ -42,7 +42,7 @@ from app.workout_paths import WorkoutPaths
 
 CONFIG = {
     "log_level": "warning",
-    "pull_length_m": 0.623,
+    "pull_length_m": 0.600,
     "max_hr": 185,
     "hr_zone_mode": "auto",
     "hr_zones": [],
@@ -384,8 +384,8 @@ def test_speed_statistics_and_fit_records_use_instantaneous_sensor() -> None:
         assert session["max_speed"] >= max(lap["max_speed"] for lap in laps)
 
 
-def test_instant_metrics_and_averaged_power_use_separate_channels() -> None:
-    """Summary/FIT use instant points except calibrated power inputs."""
+def test_instant_metrics_and_power_use_one_source_policy() -> None:
+    """Summary/FIT cadence, pull force, and power use instant points."""
     with tempfile.TemporaryDirectory() as directory:
         csv_path = Path(directory) / "metric-sources.csv"
         rows = []
@@ -416,12 +416,14 @@ def test_instant_metrics_and_averaged_power_use_separate_channels() -> None:
         assert summary.series_pull == [200.0, 250.0, 300.0]
         assert summary.avg_spm == 90.0
         assert [record["cadence"] for record in sensor_records] == [70, 90, 110]
-        # 100 N * 0.623 m * 60 spm / 60 rounds to 62 W at every point.
-        assert summary.series_power == [62.0, 62.0, 62.0]
-        assert summary.avg_power == 62.0
-        assert [record["power"] for record in sensor_records] == [62, 62, 62]
+        # Instantaneous pairs produce 140 W, 225 W, and 330 W.
+        assert summary.series_power == [140.0, 225.0, 330.0]
+        assert summary.avg_power == 232.0
+        assert summary.max_power == 330
+        assert [record["power"] for record in sensor_records] == [140, 225, 330]
         assert session["avg_cadence"] == 90
-        assert session["avg_power"] == 62
+        assert session["avg_power"] == 232
+        assert session["max_power"] == 330
 
 
 def test_resumed_distance_jump_is_preserved_consistently() -> None:

@@ -200,8 +200,7 @@ using a semicolon delimiter. It does not decide which records count as activity.
 - skips individually corrupt/truncated rows;
 - rejects a predominantly corrupt file;
 - preserves stationary and repeated valid rows;
-- projects both instantaneous and stroke-averaged protocol fields for cadence
-  and pull force, plus instantaneous speed;
+- projects instantaneous cadence, pull force, and speed for processing;
 - returns the small stdlib-only `app.table.Table` abstraction.
 
 The CSV remains the durable observation source even after FIT generation.
@@ -210,7 +209,7 @@ The CSV remains the durable observation source even after FIT generation.
 
 `app.segmentation` and `app.finalized_workout` have separate responsibilities:
 
-- `LiveSegmenter` reflects every recorded activity transition immediately.
+- `LiveSegmenter` presents a pause after five continuous inactive seconds.
 - `resolve_segments()` determines exact active runs for final processing.
 - `finalize_workout()` creates the complete domain consumed by FIT and summary.
 
@@ -245,10 +244,13 @@ silently changing workout type or omitting samples.
 
 ### Free workouts
 
-Exact runs own FIT timer events, free laps, and chart lines. Every inactive
-record closes the current run; every following active record starts another.
-An uncovered interval also breaks the run. There is no presentation debounce
-or configurable gap threshold.
+Exact runs own FIT timer events and active metrics. Every inactive record closes
+the current exact run; every following active record starts another. Free laps,
+the live pause/lap state, and free-workout chart lines use a fixed five-second
+meaningful-pause delay: shorter inactive or uncovered gaps remain inside the
+same presented lap. The threshold uses canonical elapsed time, not packet count,
+and is not configurable. Inactive records remain excluded from active time and
+averages even when the surrounding exact runs share a lap.
 
 ### Planned workouts
 
@@ -279,8 +281,8 @@ intervals, so timer time, metrics, and distance are apportioned conservatively.
 `app.workout_metrics.compute_finalized_metrics()` is the final FIT/summary
 aggregate boundary, using `app.stats.aggregate_metrics()` for each session/lap
 slice. HR, instantaneous cadence, and estimated power use positive valid
-readings and active-overlap weights. Power alone is derived per record from
-stroke-averaged cadence and pull force. `app.active_distance.ActiveDistanceAccumulator` owns
+readings and active-overlap weights. Power is derived per record from
+instantaneous cadence and pull force. `app.active_distance.ActiveDistanceAccumulator` owns
 active distance/time attribution for both finalization and the live dashboard.
 Speed uses the independent recorded instantaneous channel (`app.speed_series`,
 D017): averages are weighted by active represented intervals and maxima are
@@ -294,7 +296,7 @@ Power is estimated by `app.power`:
 power_W = pull_force_N × pull_length_m × cadence_spm / 60
 ```
 
-The default effective pull length is 0.623 m. See
+The default effective pull length is 0.600 m. See
 [POWER_MODEL.md](POWER_MODEL.md). Pull length is an explicit processing input
 recorded in workout metadata, so historical output is independent of later
 configuration changes.
@@ -315,7 +317,7 @@ FIT message order is:
 5. one session message.
 
 Records contain timestamp, active-only cumulative distance, instantaneous speed,
-HR, instantaneous cadence, estimated power from averaged cadence/force when
+HR, instantaneous cadence, estimated power from instantaneous cadence/force when
 available, and a synthetic position on the 2 km Hazewinkel
 course derived from that same cumulative distance. Strava uses the positions to
 calculate kayaking overview moving time across pauses. Because sensor samples

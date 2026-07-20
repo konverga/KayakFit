@@ -15,19 +15,19 @@ the **effective handle pull length** `L`.
 
 ## Current calibration
 
-The shipped default is `L = 0.623 m`, calibrated to reproduce the ergometer
-display from stroke-averaged force and cadence. The display's session
-*Average Power* uses `L × avg_force × avg_cadence / 60` (the product of
-cumulative means).
+The shipped default is `L = 0.600 m`. Every live, chart, summary, and FIT power
+value uses `pull_force_instant__n` and `cadence_instant__spm` from the same
+recorded packet. This is 3.7% lower than the former 0.623 m calibration and
+keeps power aligned with the other instantaneous sensor channels.
 
-Notes on expected small deviations (see `app/summary.py`):
+Future workouts use the configured pull length, which defaults to 0.600 m.
+Historical workouts continue to use the pull length saved in their
+`metadata.json`.
 
-- KayakFit's session average power is the represented-time average of per-sample estimates
-  (mean of products); the machine display uses the product of means, which
-  reads a few watts higher when force and cadence co-vary.
-- The display's "Max Power" is a sub-second within-stroke peak (~2.2× the
-  mean) that a 1 Hz log cannot reproduce; KayakFit's max power is the highest
-  one-second estimate.
+KayakFit's session/lap average is the represented-time average of the positive
+per-record estimates. Its maximum is the highest recorded-point estimate. The
+ergometer display can use a different aggregation or a sub-second within-stroke
+peak, so its average and maximum need not match KayakFit exactly.
 
 ## Refitting for another machine or firmware
 
@@ -38,9 +38,8 @@ If your machine or firmware reads differently, refit `L`:
    better; vary cadence and force independently if you can.
 2. For each paired reading, compute a length estimate from the model:
    `L_i = 60 × display_power_W / (pull_force_N × cadence_spm)`. Use the
-   stroke-averaged CSV fields (`pull_force__n`, `cadence__spm`); the
-   instantaneous fields are single-stroke snapshots and do not match the
-   calibrated model as closely.
+   instantaneous CSV fields (`pull_force_instant__n`,
+   `cadence_instant__spm`) from that same moment.
 3. Fit a single `L` across all points (a least-squares fit of display power
    against `force × cadence / 60`, or simply the mean of the `L_i` values if
    they are tight). Sanity-check the residuals: RMSE within a few watts means
@@ -50,5 +49,5 @@ If your machine or firmware reads differently, refit `L`:
    use the calibrated default (see `normalize_pull_length` in `app/power.py`).
 
 The value is passed explicitly through live, export, and summary processing to
-the same `app.power.estimate_power`, so the on-screen watts, summary, and
-exported FIT agree without process-global state.
+the same `app.power.estimate_power` formula without process-global state. All
+surfaces supply instantaneous force and cadence.

@@ -169,8 +169,7 @@ def compute_summary(
 
     Args:
         table: Output of ``CsvReader.read_all`` (including timestamp, heart
-            rate, averaged/instant cadence and pull force, distance, and
-            instantaneous speed).
+        rate, instantaneous cadence and pull force, distance, and speed).
         max_hr: Max heart rate used to derive zone bounds (when ``zones`` is None).
         zones: Optional five ascending manual zone lower bounds (bpm).
         program_steps: Optional recorded program step timeline (the
@@ -190,16 +189,13 @@ def compute_summary(
         raise ValueError("Workout contains no active ergometer samples.")
     pull_length_m = normalize_pull_length(pull_length_m)
     hrs = [to_float(v) for v in table.get_column("heart_rate")]
-    power_cadences = [to_float(v) for v in table.get_column("cadence")]
     cadences = [to_float(v) for v in table.get_column("cadence_instant")]
-    power_forces = [to_float(v) for v in table.get_column("pull_force")]
     forces = [to_float(v) for v in table.get_column("pull_force_instant")]
 
     # ---- chart series ------------------------------------------------------
     # Charts, lap/session aggregates and FIT records retain instantaneous
-    # sensor points. Power is the calibrated exception: each point is derived
-    # from stroke-averaged cadence and pull force. The renderer displays these
-    # raw points without applying a moving average.
+    # sensor points. Each power point is derived from the instantaneous cadence
+    # and pull force in that packet. The renderer applies no moving average.
     series_speed_by_index = recorded_speed_mps(table, finalized)
     series_speed = [series_speed_by_index.get(i) for i in range(table.height)]
     series_hr = [h if h is not None and h > 0 else None for h in hrs]
@@ -207,14 +203,14 @@ def compute_summary(
         (lambda p: float(p) if p is not None and p > 0 else None)(
             estimate_power(f, c, pull_length_m)
         )
-        for f, c in zip(power_forces, power_cadences, strict=False)
+        for f, c in zip(forces, cadences, strict=False)
     ]
     series_spm = [c if c is not None and c > 0 else None for c in cadences]
     series_pull = [f if f is not None and f > 0 else None for f in forces]
 
     # ---- laps (identical to the FIT export, by construction) ----------------
     # The single shared finalized model: program-step groups when a timeline
-    # exists, or one lap per exact activity run otherwise.
+    # exists, or natural free laps separated by meaningful pauses otherwise.
     segments = finalized.segments
     finalized_laps = finalized.laps
     finalized_metrics = compute_finalized_metrics(
@@ -256,12 +252,9 @@ def compute_summary(
     # Overall averages/peaks come from the finalized aggregate shared verbatim
     # with FIT session/lap messages.
     #
-    # avg_power is the represented-time average of per-sample power estimates (mean of
-    # products). The machine display instead shows L x mean(force) x
-    # mean(cadence) (product of means), which reads a few watts higher when
-    # force and cadence co-vary — a small difference vs the display is
-    # expected. max_power is the highest recorded-sample estimate; the display's
-    # within-stroke peak is not available in the recorded channel.
+    # avg_power is the represented-time average of the instantaneous-point
+    # force/cadence estimates. max_power is the highest recorded-point estimate;
+    # a sub-second within-stroke peak is not available in the recorded channel.
     totals = finalized_metrics.session
 
     # ---- time in HR zones ----------------------------------------------------

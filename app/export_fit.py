@@ -3,7 +3,8 @@
 Converts recorded workout data (a Table read from the workout CSV) into a
 Garmin FIT activity file via ``fit_tool``. Exact timer runs come from the
 recorded activity flag; finalized laps are one per recorded program step for
-planned workouts and one per exact active run for free workouts.
+planned workouts, while free workouts group runs across inactive gaps shorter
+than the fixed meaningful-pause delay.
 Session/lap statistics use the shared finalized metric result, so the exported
 numbers always match the in-app summary screen. Each active run
 gets proper START/STOP_ALL timer events (moving vs elapsed time) for accurate
@@ -201,8 +202,8 @@ class FitExporter:
             total_timer_time_ms = finalized.total_timer_time_ms
             total_elapsed_time_ms = finalized.total_elapsed_time_ms
 
-            # Timer events follow every exact active run. Free laps use those
-            # same runs; planned laps can group multiple runs inside one step.
+            # Timer events follow every exact active run. Free laps can group
+            # brief gaps; planned laps group active records by performed step.
             for lap, metrics in zip(
                 finalized.laps, finalized_metrics.laps, strict=True
             ):
@@ -323,12 +324,11 @@ class FitExporter:
         timestamps_ms = finalized.timestamps_ms
 
         # Materialize columns to Python lists once for fast positional access.
-        # FIT cadence retains the instantaneous samples; estimated power alone
-        # uses the calibrated stroke-averaged cadence/force pair.
+        # FIT cadence and estimated power retain the instantaneous packet
+        # values used by the live dashboard and finalized summary.
         heart_rate_col = workout_df.get_column_or_none("heart_rate")
         cadence_col = workout_df.get_column_or_none("cadence_instant")
-        power_cadence_col = workout_df.get_column_or_none("cadence")
-        power_pull_force_col = workout_df.get_column_or_none("pull_force")
+        power_pull_force_col = workout_df.get_column_or_none("pull_force_instant")
         # FIT record speed is the same raw instantaneous channel used by the
         # summary and chart.
         speed_by_index = recorded_speed_mps(workout_df, finalized)
@@ -383,10 +383,10 @@ class FitExporter:
             if record_speed is not None and 0 <= record_speed <= 65.535:
                 record.speed = record_speed
 
-            if power_pull_force_col is not None and power_cadence_col is not None:
+            if power_pull_force_col is not None and cadence_col is not None:
                 power = estimate_power(
                     power_pull_force_col[i],
-                    power_cadence_col[i],
+                    cadence_col[i],
                     self.pull_length_m,
                 )
                 if power is not None and 0 < power <= 65535:

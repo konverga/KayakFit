@@ -53,8 +53,8 @@ def _slice_metrics(
     raw = aggregate_metrics(
         heart_rate=_values(table, "heart_rate", indices),
         cadence=_values(table, "cadence_instant", indices),
-        power_cadence=_values(table, "cadence", indices),
-        power_pull_force=_values(table, "pull_force", indices),
+        power_cadence=_values(table, "cadence_instant", indices),
+        power_pull_force=_values(table, "pull_force_instant", indices),
         speed=_values(table, "speed_instant", indices),
         sample_weights=weights_s,
         pull_length_m=pull_length_m,
@@ -92,10 +92,9 @@ def compute_finalized_metrics(
     """Compute the single aggregate result used by summary and FIT output.
 
     Average speed is the represented-time-weighted mean of active
-    ``speed_instant`` samples, and cadence uses ``cadence_instant``. Power is
-    the explicit exception and is estimated from stroke-averaged ``cadence``
-    and ``pull_force``. Distance is aggregated independently from the
-    cumulative odometer.
+    ``speed_instant`` samples, cadence uses ``cadence_instant``, and power is
+    estimated from ``cadence_instant`` and ``pull_force_instant``. Distance is
+    aggregated independently from the cumulative odometer.
     """
     length = normalize_pull_length(pull_length_m)
     laps = tuple(

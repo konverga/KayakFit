@@ -6,24 +6,23 @@ flywheel-based pull force and stroke rate. This module reproduces that model:
     power (W) = pull_force (N) x pull_length (m) x strokes_per_second
 
 Physics: work per stroke = force x pull distance (J); strokes per second =
-cadence / 60; power = J/s = W. The calibrated effective handle pull length is
-L = 0.623 m. It also reproduces the display's session Average Power, which the
-firmware computes as L x avg_force x avg_cadence / 60 (product of cumulative
-means).
+cadence / 60; power = J/s = W. KayakFit applies the model to the ergometer's
+instantaneous pull-force and cadence points. The calibrated effective handle
+pull length is L = 0.600 m.
 
 The pull length can be recalibrated for other KayakFirst models or firmware
 revisions (see docs/POWER_MODEL.md); callers pass the recorded
 ``pull_length_m`` value explicitly so concurrent exports cannot affect each
 other through process-global state.
 
-This single definition is used by the live dashboard, the summary window and
-the FIT exporter so the on-screen watts always match the exported file.
+This single formula and instantaneous-source policy are used by the live
+dashboard, summary window, and FIT exporter.
 """
 
 from typing import Any
 
 # Effective handle pull length (m). See module docstring for the calibration.
-DEFAULT_PULL_LENGTH_M = 0.623
+DEFAULT_PULL_LENGTH_M = 0.600
 
 def normalize_pull_length(value: Any) -> float:
     """Return a valid effective pull length, or the calibrated default."""
@@ -44,9 +43,8 @@ def estimate_power(
 ) -> int | None:
     """Estimate power (W) from pull force (N) and cadence (spm).
 
-    Prefer the stroke-averaged fields (``pull_force__n`` / ``cadence__spm``),
-    which align with the calibrated display model. The instantaneous fields are
-    single-stroke snapshots and are not inputs to this model.
+    Callers supply the instantaneous pull-force and cadence fields retained
+    from the same ergometer packet.
 
     Returns None when either input is missing or non-numeric.
     """

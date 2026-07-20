@@ -21,7 +21,7 @@ not describe aspirational functionality. Verification labels mean:
 | Device connection tests | `gui/device_scanner.test_connection()` | Partial: tests only the BLE link, not the expected service/protocol |
 | Per-workout person and boat weights | main toolbar → workout worker → ergometer handshake | Implemented |
 | Five-slot ergometer display configuration | `ConfigManager.DISPLAY_MAP`, settings, handshake | Implemented |
-| Fixed reproducible metric policy | `CsvReader.read_all()`, `gui.metrics_format` | Tested; main-window sensor cards use averaged fields, while graph/summary/FIT use instantaneous sensor points except for averaged-input power (D017, D018) |
+| Fixed reproducible metric policy | `CsvReader.read_all()`, `gui.metrics_format` | Tested; main-window cards, graph, summary, and FIT use instantaneous fields (D017, D018) |
 | Automatic/manual HR zones | `app/stats.py`, settings, device-status UI | Tested |
 | Logging level and interval | settings and `WorkoutSession` | Implemented |
 | Sound cues and target grace period | settings, program panel | Implemented |
@@ -43,7 +43,7 @@ screen. It does not enable calorie calculation in KayakFit.
 | Two-action stop confirmation | recording lifecycle | Implemented |
 | Live time, distance, speed, pace, cadence, HR, pull force, and power | `gui/metrics_format.py` | Implemented with one selected-field policy |
 | 200/500/1000 m pace selection | `format_pace()` and toolbar selector | Implemented |
-| Live average/maximum previews | `RecordingLifecycleMixin._update_stat()` | Implemented; previews use the averaged live channels and are intentionally separate from finalized FIT aggregates |
+| Live average/maximum previews | `RecordingLifecycleMixin._update_stat()` | Implemented; previews use the same instantaneous channels as their live cards |
 | HR-zone tile, legend, and ranges | `gui/device_status.py` | Tested at pure-function level |
 | Ergometer, HRM, Strava, battery, reconnect, and stale-data indicators | device-status and recording-lifecycle mixins | Implemented |
 | Continue without unavailable HRM | `WorkoutSession` plus GUI prompt | Implemented |
@@ -63,9 +63,10 @@ strap, or packaged operating-system build requires physical integration tests.
   extend workout duration.
 - Canonical `session_elapsed__s` and `sample_duration__s` define record windows
   and total elapsed time; raw device timing remains diagnostic.
-- Every exact active run owns one free lap, chart segment, and FIT timer run.
-- Every activity-flag transition updates the live pause/lap state immediately;
-  uncovered canonical time also starts a new run, with no configurable threshold.
+- Every exact active run owns one FIT timer run and the active metric domain.
+- The live pause/lap state, free laps, and free-workout chart segments split only
+  after five continuous canonical seconds of inactivity. Shorter gaps do not
+  lower active averages, and the delay is not configurable.
 - Missing or invalid activity fields are rejected rather than inferred from
   other metrics.
 - A forgotten free workout is automatically stopped and saved after the
@@ -146,7 +147,7 @@ FIT output represents an indoor kayaking activity with:
 - Real active ergometer sensor records, plus one metric-free GPS compatibility
   anchor at each active-run start.
 - Timer START/STOP events for exact active runs.
-- Planned-step laps or exact active-run free-workout laps.
+- Planned-step laps or meaningful-pause free-workout laps.
 - Session and lap distance, elapsed time, timer time, speed, heart rate,
   cadence, and estimated power.
 - A deterministic Hazewinkel out-and-back GPS track derived from finalized
@@ -163,7 +164,7 @@ The summary provides:
 - Average cadence.
 - Selectable speed, power, HR, cadence, and pull-force charts.
 - Raw chart points and hover readouts, plus a power tooltip explaining its
-  averaged cadence/force inputs.
+  instantaneous cadence/force inputs.
 - Time or cumulative-distance x axis, raw-point hover values, and pause/step
   visualization. In time mode, planned phases use one compact strip above the
   metrics; short steps remain visible without repeated or overlapping labels.
@@ -173,9 +174,9 @@ The summary provides:
 The summary headline and split calculations use the same `FinalizedWorkout` and
 immutable finalized metric result as FIT generation. Speed and cadence averages
 are represented-time-weighted active instantaneous readings; peaks and FIT
-records use those same raw channels. The pull-force chart is instantaneous;
-power alone is derived from averaged cadence and force (`app.speed_series`,
-D017/D018). Charts and hover readouts show raw recorded points.
+records use those same raw channels. The pull-force chart and power inputs are
+instantaneous (`app.speed_series`, D017/D018). Charts and hover readouts show
+raw recorded points.
 Every session/lap average is bounded by its maximum, and splits preserve
 finalized centimetre/millisecond values rather than redistributing rounded
 units. Decoded-FIT regression tests compare encoded fields with

@@ -20,6 +20,7 @@ from typing import Any, ClassVar
 import yaml
 
 from app import secret_store
+from app.power import DEFAULT_PULL_LENGTH_M
 
 # Address fields that may accidentally carry a "Name (address)" dropdown label.
 _ADDRESS_KEYS = ("ergometer_mac", "hrm_mac")
@@ -82,9 +83,9 @@ class ConfigManager:
         "person_weight_default": 75,
         "boat_weight_default": 12,
         # Effective handle pull length (m) used for power estimation
-        # (power = force x pull_length x strokes/s). Calibrated against the
-        # machine display; see docs/POWER_MODEL.md to refit it.
-        "pull_length_m": 0.623,
+        # (power = instantaneous force x pull_length x strokes/s). See
+        # docs/POWER_MODEL.md to refit it.
+        "pull_length_m": DEFAULT_PULL_LENGTH_M,
         "max_hr": 185,
         # HR zones. "auto" derives the five zone bounds from max_hr; "manual"
         # uses hr_zones (five ascending bpm lower bounds, Z1..Z5).

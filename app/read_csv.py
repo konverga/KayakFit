@@ -76,11 +76,9 @@ class CsvReader:
             "window_size__s": "device_window",
             "kayakfirst_timestamp": "kayakfirst_timestamp",
             "heart_rate__bpm": "heart_rate",
-            "cadence__spm": "cadence",
             "cadence_instant__spm": "cadence_instant",
             "distance__m": "distance",
             "speed_instant__mps": "speed_instant",
-            "pull_force__n": "pull_force",
             "pull_force_instant__n": "pull_force_instant",
             "active_paddling": "active",
         }
@@ -88,8 +86,8 @@ class CsvReader:
         out_columns = [
             "timestamp", "session_elapsed", "sample_duration",
             "device_elapsed", "device_window", "kayakfirst_timestamp",
-            "heart_rate", "cadence", "cadence_instant", "distance",
-            "speed_instant", "pull_force", "pull_force_instant", "active",
+            "heart_rate", "cadence_instant", "distance", "speed_instant",
+            "pull_force_instant", "active",
         ]
         out_rows = self._read_rows(key_map)
         return Table(out_columns, out_rows)
