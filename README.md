@@ -135,12 +135,12 @@ no movement.
 ### Workouts
 
 **Workouts** is the one place for past sessions. It lists them newest first;
-click one to select it (the most recent is pre‑selected, double‑click opens
-its summary) and use the action bar at the bottom: **Summary** and **Save
-FIT** (CSV files), and **Upload** (CSV or FIT, needs a connected Strava
-account). **Open folder** reveals the files in Finder/Explorer, and **Choose
-file…** adds a workout stored somewhere else to the list so the same buttons
-work on it.
+use the search box to filter the loaded list by filename or workout type, click
+one to select it (the most recent is pre‑selected, double‑click opens its
+summary), and use the action bar at the bottom: **Summary** and **Save FIT**
+(CSV files), and **Upload** (CSV or FIT, needs a connected Strava account).
+**Open folder** reveals the files in Finder/Explorer, and **Choose file…** adds
+a workout stored somewhere else to the list so the same buttons work on it.
 
 **Summary** opens a detail screen for a workout: headline stats (active distance,
 active/elapsed/pause time, average/max sensor speed, heart rate, power, stroke rate), stacked

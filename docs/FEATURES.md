@@ -246,6 +246,6 @@ partial-durability, failure, and pending-upload outcomes.
   Hazewinkel Strava-compatibility track.
 - Calorie calculation or FIT calorie totals.
 - Cloud account synchronization other than Strava upload.
-- Historical trends, personal records, search, or analytics across workouts.
+- Historical trends, personal records, or analytics across workouts.
 - A built-in graphical workout-plan editor.
 - Linux release packaging as a supported product target.

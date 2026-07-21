@@ -34,10 +34,11 @@ Priority meanings:
 
 - **Location:** `gui/history_window.py`.
 - **Problem:** History is limited to 200 entries, sorted by modification time,
-  and has no search, filters, pagination, or in-window deletion. Copies can
-  reorder entries and older recordings can disappear from the list.
+  and has no pagination, date/metric filters, or in-window deletion. Filename
+  and workout-type search only filters the bounded list already loaded. Copies
+  can reorder entries and older recordings can disappear from the list.
 - **Next step:** Sort by recorded metadata time and load entries incrementally
-  with search, filtering, and deletion controls.
+  with richer filtering and deletion controls.
 
 ## P2 — Expand integration and failure-injection tests
 

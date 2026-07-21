@@ -17,7 +17,7 @@ flowchart LR
     ERG[KayakFirst Bull] -->|BLE serial notifications| SESSION[WorkoutSession]
     HRM[BLE HR monitor] -->|HR notifications| SESSION
     SESSION -->|one row per ergometer response| CSV[(CSV)]
-    SESSION --> META[(meta.json)]
+    SESSION --> META[(metadata.json)]
     SESSION --> STEPS[(steps.json)]
 
     CSV --> READER[CsvReader]
