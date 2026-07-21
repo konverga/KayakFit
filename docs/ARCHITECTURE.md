@@ -237,6 +237,11 @@ Each row represents `[session_elapsed__s - sample_duration__s,
 session_elapsed__s]`. `timestamp` is the same endpoint on the session epoch.
 Raw device timing is diagnostic only. Session timer time is the sum of active
 represented windows; inactive and uncovered time remains elapsed time.
+Ergometer requests use fixed one-second monotonic deadlines, including BLE
+write time inside the period and skipping catch-up bursts after a late write.
+The complete field ownership, capture formulas, and normal/delayed/reset
+examples are the canonical timeline contract in
+[DATA_TRANSFORMATIONS.md](DATA_TRANSFORMATIONS.md#1-canonical-elapsed-timeline).
 
 The planned lap totals must conserve the finalized session's active timer time
 and distance. Invalid or incomplete timelines fail processing instead of

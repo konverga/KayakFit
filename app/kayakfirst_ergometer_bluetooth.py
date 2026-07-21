@@ -32,6 +32,7 @@ DISPLAY_CONFIG_CMD = "5"
 POLL_DATA_CMD = "6\r\n"
 START_CMD = "9;1\r\n"
 STOP_CMD = "9;3\r\n"
+POLL_INTERVAL_S = 1.0
 
 
 class ErgometerConnectionError(Exception):
@@ -339,8 +340,21 @@ class KayakFirstErgometer(BleDevice):
 
         This should be run as a background task. Exits on its own once
         ``disconnect()`` clears the run flag (it is normally also cancelled).
+
+        Poll deadlines use the event loop's monotonic clock. Time spent writing
+        the command is therefore part of the one-second period instead of being
+        added to it. If a write takes longer than a complete period, resume one
+        period after it finishes rather than sending catch-up bursts.
         """
+        loop = asyncio.get_running_loop()
+        next_poll_at = loop.time()
         while self._should_run:
+            delay = next_poll_at - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            if not self._should_run:
+                break
+
             if self.client and self.client.is_connected:
                 try:
                     await self._send_command(command=POLL_DATA_CMD)
@@ -349,4 +363,8 @@ class KayakFirstErgometer(BleDevice):
                     # commands propagate, while the BLE reconnect/watchdog path
                     # owns transient streaming failures.
                     self.logger.warning(msg=f"Ergometer poll failed: {e}")
-            await asyncio.sleep(delay=1)
+
+            next_poll_at += POLL_INTERVAL_S
+            now = loop.time()
+            if next_poll_at <= now:
+                next_poll_at = now + POLL_INTERVAL_S

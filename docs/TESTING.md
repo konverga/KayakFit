@@ -67,6 +67,10 @@ Important workout invariants include:
 
 - HR-only prefixes and tails do not extend activity.
 - Initial/repeated zero-duration observations and reconnect gaps do not inflate active time.
+- Poll command duration does not accumulate into the one-second polling period,
+  and a late command never produces catch-up bursts.
+- Raw multi-second windows are capped by available canonical elapsed time, so
+  represented windows never overlap and uncovered time remains explicit.
 - Every emitted FIT record belongs to an active ergometer window.
 - Planned lap timer time does not exceed lap elapsed time.
 - Planned step attribution conserves active time and active distance when the

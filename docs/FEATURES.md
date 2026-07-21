@@ -63,6 +63,8 @@ strap, or packaged operating-system build requires physical integration tests.
   extend workout duration.
 - Canonical `session_elapsed__s` and `sample_duration__s` define record windows
   and total elapsed time; raw device timing remains diagnostic.
+- Ergometer polling follows fixed one-second monotonic deadlines; BLE write time
+  does not accumulate into the interval and late writes do not trigger bursts.
 - Every exact active run owns one FIT timer run and the active metric domain.
 - The live pause/lap state, free laps, and free-workout chart segments split only
   after five continuous canonical seconds of inactivity. Shorter gaps do not

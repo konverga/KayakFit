@@ -53,11 +53,38 @@ Finalization, not CSV reading, decides which intervals are active.
 
 ## 1. Canonical elapsed timeline
 
-The CSV stores the processing clock explicitly:
+KayakFit polls the ergometer on fixed one-second monotonic deadlines. Time spent
+writing the BLE command is part of that period, and a late command never causes
+a burst of catch-up polls. A response can still be delayed, contain multiple
+complete protocol lines, or arrive after a reconnect, so polling time alone is
+not a safe processing clock.
 
-- `session_elapsed__s`: monotonic sample endpoint since session start;
-- `sample_duration__s`: non-overlapping duration represented by the row;
-- `timestamp`: epoch milliseconds at that same endpoint.
+The timing-related CSV fields have distinct owners:
+
+| CSV field | Owner | Meaning and processing role |
+| --- | --- | --- |
+| `timestamp` | KayakFit | Epoch milliseconds at the canonical row endpoint. |
+| `session_elapsed__s` | KayakFit | Monotonic canonical endpoint since session start. |
+| `sample_duration__s` | KayakFit | Non-overlapping duration represented by the row; this is the averaging and active-time weight. |
+| `kayakfirst_timestamp` | Ergometer | Raw diagnostic timestamp. It can repeat while idle and is never the processing clock. |
+| `active_paddling` | Ergometer | Required activity flag applied to the complete represented interval. |
+| `elapsed_time__s` | Ergometer | Raw elapsed counter used at capture to advance the canonical endpoint. |
+| `window_size__s` | Ergometer | Raw field KayakFit interprets as requested coverage duration. It is not used as a response-local row number and is capped before becoming `sample_duration__s`. |
+
+`RecordingTimeline` creates the three KayakFit fields once, when each complete
+ergometer line is received. Normally the raw elapsed-counter increase advances
+the canonical endpoint. If that counter stalls or resets, the endpoint rebases
+to monotonic receipt time so it cannot move backwards. Then:
+
+```text
+available duration = session_elapsed[i] - session_elapsed[i - 1]
+sample_duration[i] = min(window_size[i], available duration)
+uncovered gap      = available duration - sample_duration[i]
+```
+
+For the first row, the previous endpoint is elapsed zero. Durations are anchored
+at their endpoint, so an uncovered gap occurs before the row's represented
+interval.
 
 For rows numbered `i = 0..n-1`:
 
@@ -78,11 +105,29 @@ timeline epoch start = timestamp[i] - session_elapsed[i] * 1000
 `elapsed_time__s`, `window_size__s`, `kayakfirst_timestamp`, and other raw
 device fields remain audit data only. There is no processing fallback.
 
-At capture, `RecordingTimeline` advances normally by the raw elapsed-counter
-delta. A stalled or reset counter rebases the endpoint to monotonic receipt
-time. It clips the raw window to the time available after the preceding
-endpoint. Any uncovered interval is therefore explicit pause time instead of
-being assigned to the next sample.
+Typical capture examples are:
+
+| Case | Previous endpoint | Raw elapsed | Raw window | Canonical endpoint | Sample duration | Represented interval |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Normal poll | 0 s | 1 s | 1 s | 1 s | 1 s | `[0, 1]` |
+| One delayed row covers two seconds | 1 s | 3 s | 2 s | 3 s | 2 s | `[1, 3]` |
+| Window smaller than elapsed advance | 1 s | 3 s | 1 s | 3 s | 1 s | `[2, 3]`, leaving `[1, 2]` uncovered |
+| Lagging two-second window on next row | 3 s | 4 s | 2 s | 4 s | 1 s | `[3, 4]`; it is clipped rather than overlapping `[2, 3]` |
+
+After a reconnect, suppose the previous canonical endpoint is 5 seconds, the
+raw counter resets to zero, and the packet is received at monotonic session time
+30 seconds. The new canonical endpoint is 30 seconds. A one-second window
+represents `[29, 30]`; `[5, 29]` stays explicitly uncovered. KayakFit does not
+invent sensor readings or activity for that transport gap.
+
+Final processing reads only `timestamp`, `session_elapsed__s`, and
+`sample_duration__s`. It never recalculates history from the three raw device
+time fields. In particular, a raw `window_size__s` of 2 contributes two seconds
+only when the canonical endpoints actually have two seconds available.
+When a retained row represents more than one second, its one instantaneous
+sensor reading represents that complete duration for time-weighted metrics.
+KayakFit does not interpolate missing points or switch to a different metric
+channel for multi-second rows.
 
 The complete recording bounds, including an inactive prefix or tail, define the
 FIT session and chart time axis.

@@ -3,6 +3,7 @@
 from app.finalized_workout import finalize_workout
 from app.recording_timeline import RecordingTimeline
 from app.speed_series import LiveSpeedTracker
+from app.stats import aggregate_metrics
 from app.table import Table
 
 
@@ -33,6 +34,53 @@ def test_normal_and_multi_second_windows_follow_device_elapsed() -> None:
     assert delayed.session_elapsed_s == 3.0
     assert delayed.sample_duration_s == 2.0
     assert delayed.gap_before_s == 0.0
+
+
+def test_lagging_multi_second_window_is_clipped_after_an_uncovered_gap() -> None:
+    timeline = _timeline()
+    first = timeline.advance(
+        device_elapsed_s=1, device_window_s=1, receipt_monotonic_s=11
+    )
+    jumped = timeline.advance(
+        device_elapsed_s=3, device_window_s=1, receipt_monotonic_s=13
+    )
+    lagging_window = timeline.advance(
+        device_elapsed_s=4, device_window_s=2, receipt_monotonic_s=14
+    )
+
+    assert first.sample_duration_s == 1.0
+    assert jumped.sample_duration_s == 1.0
+    assert jumped.gap_before_s == 1.0
+    assert lagging_window.sample_duration_s == 1.0
+    assert lagging_window.gap_before_s == 0.0
+
+    rows = [
+        {
+            "timestamp": timing.timestamp_ms,
+            "session_elapsed": timing.session_elapsed_s,
+            "sample_duration": timing.sample_duration_s,
+            "distance": distance,
+            "speed_instant": 2.0,
+            "active": 1,
+        }
+        for timing, distance in zip(
+            (first, jumped, lagging_window), (2.0, 4.0, 6.0), strict=True
+        )
+    ]
+    finalized = finalize_workout(Table(list(rows[0]), rows))
+
+    assert finalized.total_elapsed_time_ms == 4_000
+    assert finalized.total_timer_time_ms == 3_000
+    assert len(finalized.segments) == 2
+    metrics = aggregate_metrics(
+        speed=[1.0, 3.0, 5.0],
+        sample_weights=[
+            first.sample_duration_s,
+            jumped.sample_duration_s,
+            lagging_window.sample_duration_s,
+        ],
+    )
+    assert metrics["avg_speed"] == 3.0
 
 
 def test_repeated_counter_at_same_receipt_does_not_invent_active_time() -> None:

@@ -85,6 +85,10 @@ does not imply that every current code path satisfies it perfectly.
   delta. A stall/reset rebases to monotonic receipt time. Effective duration is
   clipped to avoid overlap, leaving all uncovered time as pause time. A first
   elapsed value of zero is a valid zero-duration observation.
+- **Polling rule:** Poll commands follow fixed one-second monotonic deadlines.
+  Command-write time is included in the period, and a late command resumes from
+  a new deadline instead of causing catch-up bursts. This avoids systematic
+  drift while leaving delayed device responses safe.
 - **Rationale:** The raw counter can stall or reset after reconnect. Persisting
   the normalized result once makes final processing strict, simple, and fully
   reproducible without recreating capture-time state.
