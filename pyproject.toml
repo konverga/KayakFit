@@ -1,0 +1,179 @@
+# Project + tool configuration for KayakFit.
+#
+# uv is the dependency manager: direct dependencies live in [project] and the
+# dev/build tools in [dependency-groups]; `uv lock` pins the full graph into
+# uv.lock (the single source of truth for exact versions) and `uv sync`
+# installs it. requirements.txt is now a *generated* pip fallback exported from
+# the lock (see README.md / CONTRIBUTING.md) — don't hand-edit it. This file
+# also configures Ruff (lint + import sort), mypy (type checking) and pytest;
+# none of those tools are runtime dependencies of the app.
+
+[project]
+name = "kayakfit"
+# Keep in sync with __version__ in app/__init__.py and the release tag — both
+# are bumped together (see CONTRIBUTING.md "Versioning").
+version = "0.1.0"
+description = "Record a KayakFirst Bull ergometer over BLE, show a live dashboard, and export a Garmin FIT file / upload to Strava."
+readme = "README.md"
+requires-python = ">=3.14"
+# Direct runtime imports only. Platform-specific backends (e.g. the pyobjc
+# CoreBluetooth stack bleak needs on macOS) come in transitively with their own
+# environment markers, so they are resolved into uv.lock automatically rather
+# than being listed here.
+dependencies = [
+    "bleak==2.0.0",
+    "customtkinter==5.2.2",
+    "fit-tool==0.9.15",
+    "keyring==25.6.0",
+    "PyYAML==6.0.3",
+    "requests==2.33.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/konverga/KayakFit"
+Documentation = "https://github.com/konverga/KayakFit/tree/main/docs"
+Issues = "https://github.com/konverga/KayakFit/issues"
+Repository = "https://github.com/konverga/KayakFit.git"
+
+[dependency-groups]
+# Lint, type check and test tooling plus the type stubs mypy reads. Installed by
+# a default `uv sync`; build/dev-time only — PyInstaller never bundles them.
+dev = [
+    "ruff==0.15.21",
+    "mypy==2.2.0",
+    "pytest>=9.0.3,<10",
+    "types-PyYAML==6.0.12.20250915",
+    "types-requests==2.32.4.20250913",
+    "types-setuptools==80.9.0.20250822",
+]
+# PyInstaller and its hook helpers — used only to build the desktop bundles, so
+# they are kept out of the default dev install (`uv sync --group build`).
+build = ["pyinstaller==6.21.0", "pyinstaller-hooks-contrib==2026.6"]
+
+[tool.uv]
+# KayakFit is a desktop app run from source (`uv run python kayakfit_gui.py`)
+# and packaged with PyInstaller — not a library to install — so uv manages the
+# virtualenv without trying to build/install the project itself.
+package = false
+
+[tool.ruff]
+# Match the Python this app targets (see README.md's Requirements section) so
+# Ruff's pyupgrade rules can suggest modern 3.14 idioms.
+target-version = "py314"
+# The codebase was never held to Black's 88-column default; match its actual
+# prevailing width instead of forcing a large, low-value reformat.
+line-length = 100
+extend-exclude = ["build-mac", "dist-mac", "build-win", "dist-win", ".venv"]
+
+[tool.ruff.lint]
+# A common, practical selection covering the standards in docs/STYLE_GUIDE.md
+# (import order, type hints, docstrings, PEP 8) plus a handful of
+# widely-used, low-noise correctness/clarity rule sets.
+select = [
+    "E",   # pycodestyle errors (PEP 8)
+    "W",   # pycodestyle warnings (PEP 8)
+    "F",   # pyflakes -- unused imports/variables, undefined names, dead code
+    "I",   # isort -- import grouping/sorting ("Organize imports")
+    "N",   # pep8-naming
+    "UP",  # pyupgrade -- modern idioms for the target Python version
+    "B",   # flake8-bugbear -- common bug patterns
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "A",   # flake8-builtins -- don't shadow builtins
+    "RUF", # Ruff-specific rules
+    "D",   # pydocstyle -- docstring conventions ("Fix docstrings")
+    "ANN", # flake8-annotations -- signatures carry type hints ("Add type hints")
+]
+ignore = [
+    # Docstring *presence* is a judgment call in this codebase -- public,
+    # non-trivial code is documented, but small internal helpers, closures,
+    # and GUI callbacks are deliberately left undocumented (see docs/STYLE_GUIDE.md).
+    # The rest of the "D" rules still enforce *format* for docstrings that
+    # do exist (Google convention, below); only presence is exempted here.
+    "D100", # missing docstring in public module
+    "D101", # missing docstring in public class
+    "D102", # missing docstring in public method
+    "D103", # missing docstring in public function
+    "D104", # missing docstring in public package
+    "D105", # missing docstring in magic method
+    "D106", # missing docstring in nested class
+    "D107", # missing docstring in __init__
+    # A few short formatter lambdas in gui/ (e.g. summary_window.py's
+    # `fmt1 = lambda v: ...`) are clearer inline than as a one-line def;
+    # already explicitly suppressed per-line with `# noqa: E731` at each
+    # existing use, so it's redundant (not wrong) to also flag it globally.
+    "E731",
+    # `Any` is used deliberately in this codebase where the value is genuinely
+    # dynamic (tkinter widget values, BLE `sender` objects, event/target dicts)
+    # -- docs/STYLE_GUIDE.md says to use `Any` explicitly rather than
+    # guess a wrong specific type. ANN401 disallows exactly that intentional
+    # use, so suppress it here (same judgment-call treatment as the D1xx rules
+    # above) rather than annotating misleadingly-specific types.
+    "ANN401",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+# stdlib -> third-party -> local, matching docs/STYLE_GUIDE.md
+# convention. Explicit rather than relying on auto-detection, since this
+# repo isn't a standard src-layout package.
+known-first-party = ["app", "gui"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use plain asserts and a lightweight annotation convention; keep
+# application docstring and annotation-presence rules focused on production
+# code. Ruff still checks all other enabled rules in tests.
+"tests/*.py" = ["D", "ANN"]
+
+[tool.mypy]
+python_version = "3.14"
+# Full strictness (CI runs `uv run mypy . --strict` with this on). `strict = true` turns
+# on the whole bundle: no untyped/incomplete defs, no untyped calls, no implicit
+# Any generics, warn on returning Any, disallow subclassing Any, no implicit
+# re-export, warn on unused ignores, etc. It subsumes the individual
+# warn_unused_ignores / warn_redundant_casts / check_untyped_defs flags that
+# used to be set here. Deliberate exceptions are pinned with `# type: ignore`
+# (e.g. subclassing the unstubbed customtkinter base) or the tests override
+# below. ANN401's intentional-`Any` allowance is a Ruff concern, not mypy's.
+strict = true
+# PyInstaller build output (build-mac/, dist-mac/, build-win/, dist-win/)
+# bundles vendored copies of dependencies -- e.g. dist-mac/ ships bleak twice
+# (once in KayakFit.app/Contents/Frameworks, once in KayakFit/_internal),
+# which mypy flags as "Duplicate module named 'bleak'". These dirs are build
+# artifacts, not source (already .gitignored), so exclude them from the type
+# check -- mirrors Ruff's extend-exclude above. Separators use [\\/] so the
+# regex matches on Windows (dist-win\...) as well as macOS/Linux (dist-mac/...);
+# single-quoted TOML literal string avoids double-escaping the backslashes.
+exclude = '(^|[\\/])(build-mac|dist-mac|build-win|dist-win|\.venv)[\\/]'
+# Third-party GUI/BLE/FIT libraries (customtkinter, bleak, fit_tool, keyring)
+# don't ship type stubs; under strict, an unstubbed import would otherwise be a
+# hard error -- keep it a non-failure.
+ignore_missing_imports = true
+
+# Tests keep their own lightweight convention: plain-assert `test_*` functions
+# that aren't fully annotated (this mirrors the Ruff ANN per-file-ignore for
+# tests/ above). Relax ONLY the annotation-presence strictness here -- real type
+# errors in tests (missing generic args, attribute typos, non-overlapping
+# comparisons) are still reported, so the suite stays type-checked.
+#
+# Tests are a package so one wildcard covers future modules without a manually
+# maintained list. Only annotation-presence checks are relaxed here; real type
+# errors remain enabled.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+# The test_*.py scripts hold plain `assert`-based test_* functions (see
+# docs/STYLE_GUIDE.md). pytest discovers them here.
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+# Repo root on sys.path so `import app` / `import gui` resolve regardless of how
+# pytest is invoked.
+pythonpath = ["."]
+addopts = "-ra"

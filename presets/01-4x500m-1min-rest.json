@@ -1,0 +1,12 @@
+{
+  "name": "4 × 500 m / 1:00 rest",
+  "steps": [
+    {"type": "warmup", "duration": {"kind": "time", "seconds": 300}},
+    {"repeat": 4, "steps": [
+      {"type": "work", "duration": {"kind": "distance", "meters": 500},
+       "target": {"metric": "pace_500", "low": 130, "high": 145}},
+      {"type": "rest", "duration": {"kind": "time", "seconds": 60}}
+    ]},
+    {"type": "cooldown", "duration": {"kind": "time", "seconds": 300}}
+  ]
+}

@@ -1,0 +1,117 @@
+name: CI
+
+# Gates every PR into main (and every push to main) on more than the PR
+# checklist: a lint + type-check job (ruff + mypy, on Linux) and the test suite
+# (on the two platforms the app actually ships on: macOS and Windows). All jobs
+# must pass before a PR can merge.
+#
+# Dependencies are managed with uv: `uv sync` installs exactly what uv.lock
+# pins (creating the lock on the fly if it is missing), so every job gets the
+# same tool + stub versions a developer has locally. `uv run <cmd>` then runs
+# inside that environment.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# CI only checks out the code, then lints/type-checks and runs tests — it never
+# writes to the repo, so drop the default token down to read-only.
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref (e.g. a force-push to a PR) instead
+# of letting stale runs finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # requires-python in pyproject.toml sets the floor (3.14); pin the exact
+  # interpreter CI, local dev and the release build all use here. uv downloads a
+  # managed CPython for it automatically.
+  UV_PYTHON: "3.14"
+
+jobs:
+  # Lint + static type check. Runs on Linux only (the checks are
+  # platform-independent). `uv sync` installs the dev dependency-group (ruff,
+  # mypy and the type-stub packages), so CI sees the same tool + stub versions a
+  # developer does. Both commands must pass with zero errors; a failure blocks
+  # the merge (see CONTRIBUTING.md sections 3-4 and the branch-protection note
+  # in 7).
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # Fail if uv.lock has drifted from pyproject.toml (e.g. a dependency or
+      # requires-python bump that wasn't followed by `uv lock`). --check asserts
+      # the lock is up to date without modifying it, so a stale committed lock
+      # can never slip through on the back of uv sync's silent auto-relock.
+      - name: uv.lock is in sync with pyproject.toml
+        run: uv lock --check
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Ruff (lint + import order)
+        run: uv run ruff check .
+
+      - name: Mypy (static type check)
+        run: uv run mypy . --strict
+
+      # requirements.txt is a *generated* pip fallback exported from uv.lock
+      # (see its header). Regenerate in place with the exact same command that
+      # produced the committed file (uv embeds the -o path in the header, so
+      # exporting to a different path always diffs) and fail on any change,
+      # so the committed file can never silently drift from the lock.
+      - name: requirements.txt matches uv.lock
+        run: |
+          uv export --format requirements-txt --no-hashes --all-groups -o requirements.txt
+          git diff --exit-code requirements.txt
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # Homebrew's Python on macOS runners does not include the _tkinter
+      # extension. Use the official CPython build so GUI modules can be
+      # imported during test collection, matching the macOS release build.
+      - name: Set up Python with Tk
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: uv sync --locked --python "$(which python3.14)"
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: uv sync --locked
+
+      - name: Run test suite
+        run: uv run pytest

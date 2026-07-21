@@ -1,0 +1,394 @@
+"""Structured training programs.
+
+A program is an ordered list of steps; steps may be grouped into repeated
+blocks. This module defines the data model, flattens a program specification
+(with ``repeat`` blocks) into a flat step list, and loads programs from
+``~/KayakFit/programs/*.json``. Bundled example programs are copied into that
+folder once on first run (``install_examples``) so users can edit, rename, or
+delete them like any other plan.
+
+The model is GUI- and BLE-free so it can be unit-tested and reused anywhere.
+"""
+
+import json
+import shutil
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .logger import Logger
+
+logger = Logger.get_logger(name=__name__)
+
+# Step completion rules.
+TIME = "time"
+DISTANCE = "distance"
+OPEN = "open"  # advance manually (lap / stop button)
+
+# Step kinds the GUI knows how to colour and sound-cue.
+KNOWN_KINDS = frozenset({"warmup", "work", "effort", "rest", "cooldown"})
+KNOWN_TARGET_METRICS = frozenset(
+    {"hr_zone", "pace_200", "pace_500", "pace_1000", "power", "spm"}
+)
+
+# Safety ceiling on a single flattened program. A real interval plan has at
+# most a few hundred steps; a few thousand is generous headroom. Enforced
+# *during* flattening so a runaway (e.g. deeply nested "repeat") aborts early
+# instead of exhausting memory first.
+MAX_STEPS = 5000
+
+# Hard cap on the total amount of expansion work, independent of how many
+# steps actually get appended. Nested "repeat" blocks expand as 2^N even when
+# the innermost block is empty (so MAX_STEPS alone would never trip), which can
+# hang the app; this bounds the work regardless.
+_MAX_FLATTEN_OPS = 200_000
+
+# Guards against pathologically deep "repeat" nesting turning into a Python
+# RecursionError; real plans nest at most a handful of levels.
+_MAX_REPEAT_DEPTH = 200
+
+
+class ProgramError(ValueError):
+    """A program specification is structurally invalid or unsafe to load."""
+
+
+@dataclass
+class Step:
+    """A single program step."""
+
+    label: str
+    kind: str  # warmup | work | rest | cooldown | effort
+    duration_kind: str  # TIME | DISTANCE | OPEN
+    duration_value: float | None = None  # seconds or metres; None if OPEN
+    target: dict[str, Any] | None = None  # {"metric","low","high"} (optional)
+
+    def is_open(self) -> bool:
+        """Return True if this step has no fixed time/distance boundary."""
+        return self.duration_kind == OPEN or self.duration_value is None
+
+
+@dataclass
+class Program:
+    """A named, flattened sequence of steps."""
+
+    identifier: str
+    name: str
+    steps: list[Step] = field(default_factory=list)
+
+    def __len__(self) -> int:
+        return len(self.steps)
+
+
+def _fmt_time(seconds: float) -> str:
+    total = int(seconds)
+    m, s = divmod(total, 60)
+    return f"{m}:{s:02d}"
+
+
+def _default_label(kind: str, duration_kind: str, value: float | None) -> str:
+    name = {"warmup": "Warm-up", "work": "Work", "rest": "Rest",
+            "cooldown": "Cool-down"}.get(kind, kind.capitalize())
+    if duration_kind == TIME and value is not None:
+        return f"{name} {_fmt_time(value)}"
+    if duration_kind == DISTANCE and value is not None:
+        return f"{name} {int(value)} m"
+    return name
+
+
+def _validate_duration_value(raw: Any, field_name: str) -> float:
+    """Coerce a ``seconds``/``meters`` value to a sane positive float.
+
+    Raises ``ProgramError`` (never lets an unvalidated value reach label
+    generation) for missing, non-numeric, non-finite, or non-positive values —
+    e.g. ``"seconds": -30``, ``0``, ``"abc"`` or ``[30]``.
+    """
+    if raw is None:
+        raise ProgramError(f"'{field_name}' is required for this step")
+    # bool is an int subclass; True/False is never a real duration.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ProgramError(f"'{field_name}' must be a number, got {raw!r}")
+    value = float(raw)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ProgramError(f"'{field_name}' must be a finite number, got {raw!r}")
+    if value <= 0:
+        raise ProgramError(f"'{field_name}' must be positive, got {raw!r}")
+    return value
+
+
+def _make_step(item: dict[str, Any]) -> Step:
+    allowed = {"type", "label", "duration", "target"}
+    unknown = sorted(set(item) - allowed)
+    if unknown:
+        raise ProgramError(f"unsupported step fields: {unknown}")
+    duration = item.get("duration")
+    if not isinstance(duration, dict):
+        raise ProgramError("step 'duration' must be an object")
+    kind = duration.get("kind")
+    if kind == TIME:
+        if set(duration) != {"kind", "seconds"}:
+            raise ProgramError("time duration requires only 'kind' and 'seconds'")
+        value: float | None = _validate_duration_value(duration.get("seconds"), "seconds")
+    elif kind == DISTANCE:
+        if set(duration) != {"kind", "meters"}:
+            raise ProgramError("distance duration requires only 'kind' and 'meters'")
+        value = _validate_duration_value(duration.get("meters"), "meters")
+    elif kind == OPEN:
+        if set(duration) != {"kind"}:
+            raise ProgramError("open duration accepts only the 'kind' field")
+        value = None
+    else:
+        raise ProgramError(f"unsupported duration kind {kind!r}")
+    step_type = item.get("type")
+    if step_type not in KNOWN_KINDS:
+        raise ProgramError(
+            f"unsupported step type {step_type!r}; expected one of "
+            f"{sorted(KNOWN_KINDS)}"
+        )
+    raw_label = item.get("label")
+    if raw_label is not None and (not isinstance(raw_label, str) or not raw_label.strip()):
+        raise ProgramError("step 'label' must be non-empty text")
+    label = raw_label.strip() if isinstance(raw_label, str) else _default_label(
+        step_type, kind, value
+    )
+    target = _validate_target(item.get("target"))
+    return Step(
+        label=str(label),
+        kind=step_type,
+        duration_kind=kind,
+        duration_value=value,
+        target=target,
+    )
+
+
+def _validate_target(raw: Any) -> dict[str, Any] | None:
+    """Validate an optional live target before GUI code receives it."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ProgramError("step 'target' must be an object")
+    if set(raw) != {"metric", "low", "high"}:
+        raise ProgramError("target requires exactly 'metric', 'low', and 'high'")
+    metric = raw.get("metric")
+    if metric not in KNOWN_TARGET_METRICS:
+        raise ProgramError(f"unsupported target metric {metric!r}")
+    low = raw.get("low")
+    high = raw.get("high")
+    if (
+        isinstance(low, bool)
+        or isinstance(high, bool)
+        or not isinstance(low, (int, float))
+        or not isinstance(high, (int, float))
+    ):
+        raise ProgramError("target 'low' and 'high' must be numbers")
+    low_f, high_f = float(low), float(high)
+    if not all(v == v and v not in (float("inf"), float("-inf")) for v in (low_f, high_f)):
+        raise ProgramError("target bounds must be finite")
+    if low_f > high_f:
+        raise ProgramError("target 'low' must not exceed 'high'")
+    if metric == "hr_zone" and (low_f < 1 or high_f > 5):
+        raise ProgramError("heart-rate zone targets must be within Z1..Z5")
+    return {"metric": metric, "low": low, "high": high}
+
+
+def _flatten(
+    items: Any,
+    out: list[Step],
+    budget: list[int] | None = None,
+    depth: int = 0,
+) -> None:
+    """Expand ``repeat`` blocks into ``out``, validating structure as we go.
+
+    ``budget`` is a single-element mutable counter of expansion operations,
+    bounding total work (see ``_MAX_FLATTEN_OPS``) so a runaway/exponential
+    nested ``repeat`` aborts early instead of hanging or OOM-ing. Structural
+    problems (``steps`` not a list, a step that isn't an object, a bad
+    ``repeat`` count) raise ``ProgramError`` locally and predictably rather
+    than surfacing as whatever incidental ``AttributeError`` the first ``.get``
+    happens to throw.
+    """
+    if budget is None:
+        budget = [0]
+    if depth > _MAX_REPEAT_DEPTH:
+        raise ProgramError(f"'repeat' nesting exceeds {_MAX_REPEAT_DEPTH} levels")
+    if not isinstance(items, list):
+        raise ProgramError(f"'steps' must be a list, not {type(items).__name__}")
+    for item in items:
+        budget[0] += 1
+        if budget[0] > _MAX_FLATTEN_OPS:
+            raise ProgramError(
+                "program is too large to expand "
+                f"(over {_MAX_FLATTEN_OPS} operations — runaway 'repeat'?)"
+            )
+        if not isinstance(item, dict):
+            raise ProgramError(f"each step must be an object, not {type(item).__name__}")
+        if "repeat" in item:
+            if set(item) != {"repeat", "steps"}:
+                raise ProgramError("repeat blocks require exactly 'repeat' and 'steps'")
+            raw = item["repeat"]
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+                raise ProgramError(f"'repeat' must be a positive whole number, got {raw!r}")
+            count = raw
+            nested = item["steps"]
+            for _ in range(count):
+                _flatten(nested, out, budget, depth + 1)
+        else:
+            if len(out) >= MAX_STEPS:
+                raise ProgramError(f"program exceeds the {MAX_STEPS}-step limit")
+            out.append(_make_step(item))
+
+
+def load_program(spec: dict[str, Any], source: str | None = None) -> Program:
+    """Build a Program from a specification dict (flattening repeat blocks).
+
+    ``source`` supplies the stable file identifier when loading from disk.
+    Raises ``ProgramError`` for a structurally invalid or unsafe spec.
+    """
+    if not isinstance(spec, dict):
+        raise ProgramError(f"program spec must be an object, not {type(spec).__name__}")
+    if set(spec) != {"name", "steps"}:
+        raise ProgramError("program requires exactly 'name' and 'steps'")
+    name = spec.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ProgramError("program 'name' must be non-empty text")
+    steps: list[Step] = []
+    _flatten(spec.get("steps", []), steps, budget=[0], depth=0)
+    return Program(identifier=source or name, name=name.strip(), steps=steps)
+
+
+# --------------------------------------------------------------------------- #
+# Program directories                                                         #
+# --------------------------------------------------------------------------- #
+def _presets_dir() -> Path:
+    """Folder holding the built-in preset programs (bundled JSON).
+
+    Uses the PyInstaller extraction dir when frozen, otherwise the repo's
+    ``presets/`` folder next to the ``app`` package when running from source.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "presets"
+    return Path(__file__).resolve().parent.parent / "presets"
+
+
+def programs_dir() -> Path:
+    """Folder holding the user's programs (examples are installed here too)."""
+    return Path.home() / "KayakFit" / "programs"
+
+
+# Marker written after the one-time example install, so examples the user
+# deletes or edits are never re-copied on later launches.
+_EXAMPLES_MARKER = ".examples-installed"
+
+
+def install_examples(dest: Path | None = None) -> int:
+    """Copy the bundled example programs into the user's programs folder.
+
+    Runs once (guarded by a marker file in the destination). Existing files
+    are never overwritten. Best-effort: returns the number of files copied,
+    0 if already installed or on error.
+    """
+    target = dest if dest is not None else programs_dir()
+    marker = target / _EXAMPLES_MARKER
+    try:
+        if marker.exists():
+            return 0
+        target.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for src in sorted(_presets_dir().glob("*.json")):
+            dst = target / src.name
+            if not dst.exists():
+                shutil.copyfile(src, dst)
+                copied += 1
+        marker.write_text("Bundled example programs were installed here.\n",
+                          encoding="utf-8")
+        return copied
+    except OSError:
+        return 0
+
+
+def _record_skip(warnings: list[str] | None, path: Path, reason: str) -> None:
+    """Log (and optionally collect) a per-file load failure.
+
+    Failures are logged at WARNING; the collected ``warnings`` list lets a
+    caller (the GUI) surface a "N plan(s) skipped" summary without re-scanning.
+    """
+    logger.warning("Program %s skipped: %s", path.name, reason)
+    if warnings is not None:
+        warnings.append(f"{path.name}: {reason}")
+
+
+def _load_programs_from(
+    directory: Path, warnings: list[str] | None = None
+) -> list[Program]:
+    """Load every valid ``*.json`` program in a directory (best-effort, sorted).
+
+    A single malformed file never takes down the rest: every failure mode
+    (unreadable/undecodable file, invalid JSON, BOM/non-UTF-8, structurally
+    malformed spec, negative/non-numeric durations, runaway ``repeat``) is
+    caught, logged with a reason, and skipped individually. A file with no
+    steps to run is distinguished from an actual failure: it is logged at INFO
+    (not WARNING) and simply not added, so "nothing to run" is never conflated
+    with "failed to load".
+    """
+    out: list[Program] = []
+    if not directory.exists():
+        return out
+    for path in sorted(directory.glob("*.json")):
+        # NOTE: encoding="utf-8" (not utf-8-sig) is deliberate — a UTF-8 BOM
+        # (common from Notepad) makes json.load raise, so such a file is
+        # skipped *and logged* rather than silently vanishing. We favour a
+        # discoverable skip over silently accepting a mis-encoded file.
+        try:
+            with open(path, encoding="utf-8") as f:
+                spec = json.load(f)
+        except (OSError, ValueError) as exc:
+            # ValueError covers json.JSONDecodeError and UnicodeDecodeError.
+            _record_skip(warnings, path, f"could not be read ({exc})")
+            continue
+
+        if not isinstance(spec, dict):
+            _record_skip(warnings, path, "top-level JSON is not an object")
+            continue
+
+        try:
+            prog = load_program(spec, source=path.name)
+        except ProgramError as exc:
+            _record_skip(warnings, path, str(exc))
+            continue
+        except (OSError, ValueError, TypeError, AttributeError, KeyError,
+                IndexError, RecursionError, MemoryError) as exc:
+            # Defence in depth: any unforeseen malformed-structure error (or a
+            # RecursionError/MemoryError from a runaway file) must skip only
+            # this one file, never propagate and wipe the whole program list.
+            _record_skip(warnings, path, f"failed to load ({type(exc).__name__}: {exc})")
+            continue
+
+        if not prog.steps:
+            logger.info(
+                "Program %s has no steps; skipping (nothing to run).", path.name
+            )
+            continue
+        out.append(prog)
+    return out
+
+
+def builtin_programs(warnings: list[str] | None = None) -> list[Program]:
+    """Bundled example programs (the install source for ``install_examples``)."""
+    return _load_programs_from(_presets_dir(), warnings)
+
+
+def user_programs(warnings: list[str] | None = None) -> list[Program]:
+    """Load programs from ~/KayakFit/programs/*.json (best-effort)."""
+    return _load_programs_from(programs_dir(), warnings)
+
+
+def list_programs(warnings: list[str] | None = None) -> list[Program]:
+    """All available programs.
+
+    Everything lives in ``~/KayakFit/programs/`` — the bundled examples are
+    copied there once (``install_examples``), alongside user-authored plans.
+
+    Pass a list as ``warnings`` to collect one human-readable string per
+    skipped file; the same reasons are always logged.
+    """
+    return user_programs(warnings)
