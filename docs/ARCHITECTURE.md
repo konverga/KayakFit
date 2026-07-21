@@ -251,11 +251,12 @@ silently changing workout type or omitting samples.
 
 Exact runs own FIT timer events and active metrics. Every inactive record closes
 the current exact run; every following active record starts another. Free laps,
-the live pause/lap state, and free-workout chart lines use a fixed five-second
-meaningful-pause delay: shorter inactive or uncovered gaps remain inside the
-same presented lap. The threshold uses canonical elapsed time, not packet count,
-and is not configurable. Inactive records remain excluded from active time and
-averages even when the surrounding exact runs share a lap.
+the live pause/lap state, and chart lines in either workout mode use a fixed
+five-second meaningful-pause delay: shorter inactive or uncovered gaps remain
+inside the same presented lap or unbroken chart line. The threshold uses
+canonical elapsed time, not packet count, and is not configurable. Inactive
+records remain excluded from active time and averages even when the surrounding
+exact runs share a lap.
 
 ### Planned workouts
 
@@ -278,8 +279,14 @@ free-workout grouping.
 Time steps are driven by canonical session elapsed time rather than an
 independent periodic wall clock. A delayed sample can cross multiple boundaries:
 `ProgramRunner` preserves its overshoot and reports every exact transition.
+`ProgramRunner` also validates that the canonical timing it receives is
+monotonic and non-overlapping in integer milliseconds, so an exactly-filled
+window never fails on float-subtraction rounding inside the live BLE callback.
 Finalization intersects each represented sample window with performed step
 intervals, so timer time, metrics, and distance are apportioned conservatively.
+Planned summary chart lines break only at the same five-second meaningful-pause
+boundaries as free workouts; performed step boundaries render as chart bands,
+not line breaks (D019).
 
 ## Statistics and power
 
@@ -346,6 +353,11 @@ elapsed time reconciles as the sum of lap elapsed time plus following gaps.
 Each chart point uses the CSV sample endpoint, exactly matching the timestamp of
 its FIT sensor record. The FIT timer can begin one represented sample window
 before the first point because the record describes the interval ending there.
+So the drawn line spans match the splits table on both axes, each run's line
+begins at a run-start anchor — the timer START on the time axis and the
+cumulative distance preceding its first window on the distance axis — reusing the
+`series_anchor_t`/`series_anchor_distance` boundaries and mirroring the FIT
+run-start anchor (D020).
 Time-based planned workouts render their phases once in a compact strip above
 the metric panels. Step boundaries are shared alignment guides across those
 panels; the old per-panel phase fills are intentionally not repeated. Distance

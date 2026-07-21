@@ -148,6 +148,28 @@ def test_first_represented_window_counts_toward_program() -> None:
     assert state["transitions"][1]["boundary_elapsed"] == 1.0
 
 
+def test_exactly_filled_window_survives_float_rounding() -> None:
+    """A window that exactly fills its elapsed gap must not trip the guard.
+
+    The canonical fields are millisecond-derived, but ``2.251 - 2.0`` is
+    ``0.2509999999999999`` and ``32.254 - 30.254`` is ``1.9999999999999964`` in
+    IEEE floats, so a strict seconds comparison rejected a legitimate window
+    that filled its gap exactly. Both values are taken from a real high-cadence
+    recording that crashed the BLE callback before the guard rounded to
+    milliseconds.
+    """
+    spec = {"name": "fill", "steps": [
+        {"type": "work", "duration": {"kind": "time", "seconds": 100000}},
+    ]}
+    r = ProgramRunner(program.load_program(spec))
+    r.update(elapsed_s=2.0, distance_m=0, sample_duration_s=1.0)
+    r.update(elapsed_s=2.251, distance_m=0, sample_duration_s=0.251)
+    r.update(elapsed_s=30.254, distance_m=0, sample_duration_s=1.0)
+    r.update(elapsed_s=32.254, distance_m=0, sample_duration_s=2.0)
+    assert not r.done and r.index == 0
+    print("  ok: exactly-filled canonical windows do not raise on float rounding")
+
+
 def test_mixed_step_overshoot_interpolates_time_and_distance() -> None:
     spec = {
         "name": "mixed jump",

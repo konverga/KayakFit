@@ -98,6 +98,13 @@ does not imply that every current code path satisfies it perfectly.
 - **Boundary policy:** Planned laps receive the exact overlap between the sample
   window and each performed step. Time-weighted metrics and distance are split
   by the same overlap fraction.
+- **Validation:** `ProgramRunner` re-checks the same monotonic, non-overlapping
+  invariant in integer milliseconds, matching capture and finalization. The
+  canonical fields are millisecond-derived, so comparing float seconds directly
+  once rejected an exactly-filled window (`2.251 - 2.0 == 0.2509999999999999`,
+  just under a legitimate `0.251` s window) and crashed the live BLE callback.
+  Rounding both sides to milliseconds removes that false positive while still
+  rejecting a genuine overlap.
 
 ## D006 — Free and planned workouts share activity selection but not grouping
 
@@ -292,3 +299,44 @@ does not imply that every current code path satisfies it perfectly.
   instantaneous device fields. Summary graphs, aggregates, and FIT records use
   the same instantaneous sensor channels. Changing app settings cannot
   reinterpret a workout's metric channels.
+
+## D019 — Chart-line breaks use the meaningful-pause delay in every workout mode
+
+- **Status:** Accepted
+- **Decision:** The summary chart restarts its line only at meaningful-pause
+  group boundaries (`app.finalized_workout._chart_breaks` over
+  `_group_free_segments`), for planned and free workouts alike. Exact active runs
+  less than the fixed five-second delay apart are drawn as one continuous line.
+- **Rationale:** Planned charts previously broke the line at every exact activity
+  run. At high cadence the ergometer can report a one-second window across a
+  two-second elapsed advance, leaving a one-second uncovered gap that closes an
+  exact run even though paddling never stopped. Breaking the line at each such
+  gap fragmented a continuous work interval into disconnected pieces. Reusing the
+  meaningful-pause grouping already applied to free workouts keeps the line
+  faithful to the effort.
+- **Consequences:** Only chart-line continuity changes. Exact runs, FIT timer
+  events, active time, distance, and planned/free laps are unchanged; the
+  uncovered second still counts as pause, not active time. Planned step
+  boundaries continue to render as chart bands, not line breaks. A real pause of
+  five seconds or more still starts a new line.
+
+## D020 — Summary chart lines begin at each run's start boundary
+
+- **Status:** Accepted
+- **Decision:** On both the time and distance x-axes, the summary chart starts
+  each active run's line at the run's start boundary: the FIT timer START (the
+  window start time) and the cumulative active distance preceding the run's
+  first sample window. `app.summary` exposes these as `series_anchor_t` and
+  `series_anchor_distance`; `gui.summary_window` prepends the anchor at each line
+  break using the first record's value.
+- **Rationale:** Sensor records are plotted at the end of their sample window, so
+  without an anchor each run's line began one window in. In distance mode this
+  understated every segment's span versus the lap table and drew a resume
+  odometer jump — credited to the first active record after a pause — as empty
+  space between segments. Anchoring each run at its start makes the drawn span
+  equal the lap distance and active time and mirrors the metric-free FIT
+  run-start anchor already emitted for Strava (D009).
+- **Consequences:** Presentation only. The anchor is a drawn lead-in, not a
+  record: the `series_*` value arrays, hover snapping, statistics, laps, totals,
+  and FIT output are unchanged. Where a distance reading is missing the anchor is
+  omitted and the line falls back to starting at its first point.

@@ -154,13 +154,17 @@ transition closes it. An uncovered interval also closes a run, even when the
 next row is active. Exact runs drive active time, metrics, distance attribution,
 and FIT timer events. Zero-duration observations belong to no active run.
 
-Free-workout presentation applies a fixed five-second meaningful-pause delay.
-The live pause indicator, lap counter, free laps, and free-workout chart breaks
-only split after at least five continuous canonical seconds without activity.
-Shorter gaps remain inside one lap but their inactive samples still contribute
-neither active time nor metric averages. The threshold uses elapsed duration,
-not record count, and is not configurable. Planned laps continue to follow the
-performed program steps.
+A fixed five-second meaningful-pause delay governs presentation grouping. The
+live pause indicator, lap counter, and free laps split only after at least five
+continuous canonical seconds without activity. Chart lines behave the same way in
+both workout modes: exact runs less than five seconds apart—whether separated by
+inactive samples or an uncovered gap—stay one continuous line, so a brief cleared
+activity flag or a high-cadence uncovered second does not fragment a continuous
+effort into disconnected pieces. Shorter gaps remain inside one lap, but their
+inactive samples still contribute neither active time nor metric averages. The
+threshold uses elapsed duration, not record count, and is not configurable.
+Planned laps continue to follow the performed program steps, which render as
+chart bands rather than line breaks.
 
 ## 3. Active distance
 
@@ -230,6 +234,15 @@ extreme points to fit the available pixels; it never replaces them with
 calculated averages. FIT records and session/lap aggregates use the same
 unsmoothed source points. Every time-axis point uses the row's canonical CSV
 sample endpoint, which is also the timestamp written to its FIT sensor record.
+
+Because points sit at their window ends, each active run's line additionally
+begins at the run's start boundary: the timer START on the time axis and the
+cumulative active distance preceding its first sample window on the distance
+axis. This run-start anchor is a drawn lead-in rather than a recorded point, so
+the visible span of each run matches its lap active time and distance instead of
+dropping the first window (and the resume odometer jump credited to it). It
+mirrors the metric-free FIT run-start anchor and does not affect hover values,
+statistics, or totals (D020).
 
 ## 5. Other active averages
 

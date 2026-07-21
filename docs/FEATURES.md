@@ -66,9 +66,10 @@ strap, or packaged operating-system build requires physical integration tests.
 - Ergometer polling follows fixed one-second monotonic deadlines; BLE write time
   does not accumulate into the interval and late writes do not trigger bursts.
 - Every exact active run owns one FIT timer run and the active metric domain.
-- The live pause/lap state, free laps, and free-workout chart segments split only
-  after five continuous canonical seconds of inactivity. Shorter gaps do not
-  lower active averages, and the delay is not configurable.
+- The live pause/lap state, free laps, and summary chart segments in both workout
+  modes split only after five continuous canonical seconds of inactivity. Shorter
+  inactive or uncovered gaps do not lower active averages or break the chart
+  line, and the delay is not configurable.
 - Missing or invalid activity fields are rejected rather than inferred from
   other metrics.
 - A forgotten free workout is automatically stopped and saved after the
@@ -105,6 +106,9 @@ Implemented behavior:
 - One summary split/FIT lap per recorded step, with separate elapsed and active
   time. An inactive rest remains visible with blank active averages.
 - Planned step bands on time-based summary charts.
+- Summary chart lines stay continuous through brief (under five-second) inactive
+  or uncovered gaps, so a high-cadence effort is not fragmented into disconnected
+  segments; only a pause of five seconds or more starts a new line (D019).
 
 Status: **Tested**. The strict schema rejects unknown fields, duration kinds,
 step types, targets, and non-integral repeat counts. Progression preserves exact
@@ -170,6 +174,8 @@ The summary provides:
 - Time or cumulative-distance x axis, raw-point hover values, and pause/step
   visualization. In time mode, planned phases use one compact strip above the
   metrics; short steps remain visible without repeated or overlapping labels.
+  Each run's line starts at its run-start boundary so its drawn time and distance
+  spans match the splits table rather than dropping the first sample window (D020).
 - Time in HR zones.
 - Free-workout laps or planned-step splits.
 

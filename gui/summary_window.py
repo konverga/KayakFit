@@ -307,10 +307,19 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
         steps: Sequence[tuple[float, float, str, str | None]] | None = None,
         breaks: Sequence[bool] | None = None,
         time_bounds: tuple[float, float] | None = None,
+        anchor_t: Sequence[float] | None = None,
+        anchor_distance: Sequence[float | None] | None = None,
     ) -> None:
         super().__init__(master, corner_radius=10)
         self._xs_time = xs_time
         self._xs_distance = xs_distance
+        # Run-start x for each point, per axis: at a break these begin the line
+        # at the run boundary (timer START / distance before the first window)
+        # so the drawn span matches the lap table (D020).
+        self._anchor_time = list(anchor_t) if anchor_t is not None else []
+        self._anchor_distance = (
+            list(anchor_distance) if anchor_distance is not None else []
+        )
         self._x_mode = "time"  # "time" | "distance"
         self._dist_km = False  # distance axis labelled in km (set per redraw)
         # Only offer the distance axis when there is at least one real reading;
@@ -383,6 +392,12 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
         """
         return self._xs_distance if self._x_mode == "distance" else self._xs_time
 
+    def _active_anchor_xs(self) -> Sequence[float | None]:
+        """Run-start x per point for the current mode (empty if not provided)."""
+        return (
+            self._anchor_distance if self._x_mode == "distance" else self._anchor_time
+        )
+
     def _fmt_x(self, value: float) -> str:
         """Format an x-axis value for the current mode (time or distance)."""
         if self._x_mode == "distance":
@@ -434,6 +449,7 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
         grid, text = _theme(_GRID), _theme(_TEXT)
 
         xs = self._active_xs()
+        anchor_xs = self._active_anchor_xs()
         if not shown or not xs:
             c.create_text(
                 (x0 + x1) / 2, height / 2,
@@ -570,7 +586,8 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
             for i in indices:
                 xt = xs[i]
                 yv = s.ys[i]
-                if i < len(self._breaks) and self._breaks[i] and points:
+                is_break = i < len(self._breaks) and self._breaks[i]
+                if is_break and points:
                     if len(points) >= 4:
                         c.create_line(*points, fill=line, width=2)
                     elif len(points) == 2:
@@ -584,6 +601,13 @@ class _MultiChart(ctk.CTkFrame):  # type: ignore[misc]  # customtkinter ships no
                         c.create_line(*points, fill=line, width=2)
                     points = []
                     continue
+                # Begin each run's line at its start boundary (timer START /
+                # cumulative distance before the first window) so the drawn span
+                # covers the first sample window and matches the lap table (D020).
+                if is_break:
+                    anchor_x = anchor_xs[i] if i < len(anchor_xs) else None
+                    if anchor_x is not None and anchor_x < xt:
+                        points.extend((px(anchor_x), py(yv)))
                 points.extend((px(xt), py(yv)))
             if len(points) >= 4:
                 c.create_line(*points, fill=line, width=2)
@@ -1084,6 +1108,8 @@ def _render_summary_window(root: Any, csv_path: str, summary: WorkoutSummary) ->
             steps=summary.series_steps,
             breaks=summary.series_breaks,
             time_bounds=summary.series_time_bounds,
+            anchor_t=summary.series_anchor_t,
+            anchor_distance=summary.series_anchor_distance,
         ).pack(fill="x", padx=10, pady=(0, 8))
 
         if any(v is not None for v in summary.series_hr):

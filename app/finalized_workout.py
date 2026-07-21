@@ -353,14 +353,20 @@ def _build_free_laps(
     return laps
 
 
-def _chart_breaks(
-    segments: list[ActivitySegment],
-    *,
-    planned: bool,
-) -> set[int]:
-    """Break planned charts at exact runs and free charts at natural laps."""
-    if planned:
-        return {segment.start_idx for segment in segments}
+def _chart_breaks(segments: list[ActivitySegment]) -> set[int]:
+    """Restart chart lines only at meaningful pauses, for planned and free alike.
+
+    A break starts a new summary polyline. Both workout modes group exact runs
+    separated by less than the fixed five-second meaningful-pause delay
+    (``_group_free_segments``). A brief cleared activity flag between strokes or
+    a sub-threshold uncovered gap therefore does not fragment one continuous
+    effort into disconnected segments. The latter is common at high cadence,
+    when the ergometer reports a one-second window across a two-second elapsed
+    advance and leaves one second uncovered inside otherwise unbroken paddling.
+    Exact runs, timer time, distance, and laps are unaffected; only line
+    continuity changes. Planned laps still come from performed steps and render
+    as chart bands rather than line breaks (D019).
+    """
     return {group[0].start_idx for group in _group_free_segments(segments)}
 
 
@@ -465,7 +471,7 @@ def finalize_workout(
         laps = _build_free_laps(
             segments, record_timer_ms, record_distance_m
         )
-    chart_breaks = _chart_breaks(segments, planned=planned_laps)
+    chart_breaks = _chart_breaks(segments)
     timer_ms = sum(segment.timer_time_ms for segment in segments)
     elapsed_ms = timeline_end_ms - timeline_start_ms
     laps = _conserve_lap_totals(laps, timer_ms, total_distance, planned_laps)

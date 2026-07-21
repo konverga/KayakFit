@@ -297,7 +297,10 @@ def test_program_lap_is_clipped_to_active_signal() -> None:
     assert summary.active_time_s == 4.0
     assert len(summary.laps) == 1
     assert summary.series_hr == [121.0, 122.0, 124.0, 125.0]
-    assert summary.series_breaks == [True, False, True, False]
+    # The two active bursts are separated by a single inactive second, well
+    # under the five-second meaningful pause, so the chart line stays continuous
+    # (one break) even though each burst is its own exact timer run (D019).
+    assert summary.series_breaks == [True, False, False, False]
     assert summary.laps[0].avg_hr == 123.0
     assert summary.laps[0].avg_spm == 70.0
     print("  ok: planned lap groups active bursts without counting inactive time")
@@ -571,6 +574,58 @@ def test_meaningful_pause_breaks_chart_without_splitting_planned_lap() -> None:
     assert len(summary.laps) == 1
     assert summary.series_breaks == [True, False, True, False]
     print("  ok: long pause breaks chart but planned step remains one lap")
+
+
+def test_planned_chart_line_bridges_subthreshold_uncovered_gap() -> None:
+    """A high-cadence uncovered second keeps the planned chart line continuous.
+
+    At high cadence the ergometer can advance elapsed time by two seconds while
+    reporting a one-second window, leaving one uncovered second inside otherwise
+    unbroken paddling. That uncovered interval still closes an exact timer run,
+    but the chart line must not fragment for a gap far below the five-second
+    meaningful pause (D019). Here elapsed jumps 2 -> 4 s with a one-second
+    window, so ``[2, 3]`` is uncovered between two active runs.
+    """
+    columns = COLUMNS
+    elapseds = [1, 2, 4, 5]
+    rows = []
+    distance = 0.0
+    for elapsed in elapseds:
+        distance += 3.0
+        rows.append(
+            {
+                "timestamp": T0 + elapsed * 1000,
+                "session_elapsed": elapsed,
+                "heart_rate": 150,
+                "cadence": 120,
+                "cadence_instant": 120,
+                "distance": distance,
+                "speed_instant": 4.0,
+                "pull_force": 190,
+                "pull_force_instant": 190,
+                "active": 1,
+                "sample_duration": 1,
+            }
+        )
+    steps = [
+        {
+            "index": 0,
+            "type": "work",
+            "label": "Sprint",
+            "start_elapsed_s": 0,
+            "end_elapsed_s": 5,
+        }
+    ]
+    table = Table(columns, rows)
+    # The uncovered second still splits the exact timer domain into two runs ...
+    finalized = finalize_workout(table, program_steps=steps)
+    assert len(finalized.segments) == 2
+    # ... but presentation keeps one lap and one unbroken chart line.
+    summary = compute_summary(table, program_steps=steps)
+    assert len(summary.laps) == 1
+    assert summary.active_time_s == 4.0
+    assert summary.series_breaks == [True, False, False, False]
+    print("  ok: sub-threshold uncovered gap keeps the planned chart line whole")
 
 
 def test_active_rest_stays_a_labelled_lap() -> None:

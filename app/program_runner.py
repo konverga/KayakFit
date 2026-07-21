@@ -195,12 +195,23 @@ class ProgramRunner:
         if (
             current_elapsed is None
             or not isfinite(current_elapsed)
-            or current_elapsed < self._previous_elapsed
             or represented_s is None
             or not isfinite(represented_s)
             or represented_s < 0
-            or represented_s > current_elapsed - self._previous_elapsed
         ):
+            raise ValueError("ProgramRunner requires canonical non-overlapping timing")
+        # Validate the monotonic, non-overlapping invariant in integer
+        # milliseconds, the same representation RecordingTimeline and
+        # finalize_workout use. The canonical fields are millisecond-derived, so
+        # comparing the float seconds directly makes an exactly-filled window
+        # (represented == available) fail spuriously: e.g. a real 2.251 s
+        # endpoint after 2.0 s yields 2.251 - 2.0 == 0.2509999999999999, just
+        # under a legitimate 0.251 s window. Rounding both sides first removes
+        # that false positive while still rejecting a genuine overlap.
+        endpoint_ms = round(current_elapsed * 1000)
+        previous_ms = round(self._previous_elapsed * 1000)
+        represented_ms = round(represented_s * 1000)
+        if endpoint_ms < previous_ms or represented_ms > endpoint_ms - previous_ms:
             raise ValueError("ProgramRunner requires canonical non-overlapping timing")
 
         sample_start_elapsed = current_elapsed - represented_s

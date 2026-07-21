@@ -99,6 +99,16 @@ class WorkoutSummary:
     # chart uses these boundaries to break lines without inventing non-FIT
     # records solely as visual sentinels.
     series_breaks: list[bool] = field(default_factory=list)
+    # Run-start boundary for each point: the elapsed time (seconds) and the
+    # cumulative active distance (metres) at the START of that record's window.
+    # At a break these are the run's start coordinates, so the chart can begin a
+    # line at the run boundary — the FIT timer START and the distance preceding
+    # its first sample window — instead of one window in. This mirrors the
+    # metric-free FIT run-start anchor (D009) so the drawn span matches the lap
+    # table (D020). ``series_anchor_distance`` is None where distance is missing;
+    # non-break entries are unused by the chart.
+    series_anchor_t: list[float] = field(default_factory=list)
+    series_anchor_distance: list[float | None] = field(default_factory=list)
     # Planned step bands on the chart's canonical session-elapsed time axis.
     # seconds, label and step kind. Empty for free workouts.
     series_steps: list[tuple[float, float, str, str | None]] = field(
@@ -156,6 +166,20 @@ def _lap_summary(
         kind=kind,
         label=label,
     )
+
+
+def _window_start_distance_m(
+    cumulative_m: float | None, credited_m: float | None
+) -> float | None:
+    """Cumulative active distance at the start of a record's sample window.
+
+    The endpoint less the metres credited to this record. Returns None when
+    either value is missing, so the chart simply omits the run-start anchor
+    rather than inventing a distance.
+    """
+    if cumulative_m is None or credited_m is None:
+        return None
+    return cumulative_m - credited_m
 
 
 def compute_summary(
@@ -320,6 +344,22 @@ def compute_summary(
             finalized.record_cumulative_distance_m.get(i) for i in moving_indices
         ],
         series_breaks=[i in chart_breaks for i in moving_indices],
+        # Start-of-window coordinates: the FIT timer START (window start time)
+        # and the cumulative distance preceding the window (endpoint minus the
+        # metres credited to this record). At a run/lap break these are the
+        # run's start boundary, letting the chart draw the first sample window
+        # instead of dropping it (D020).
+        series_anchor_t=[
+            (finalized.record_windows_ms[i][0] - chart_start_ms) / 1000.0
+            for i in moving_indices
+        ],
+        series_anchor_distance=[
+            _window_start_distance_m(
+                finalized.record_cumulative_distance_m.get(i),
+                finalized.record_distance_m.get(i),
+            )
+            for i in moving_indices
+        ],
         series_steps=[
             (
                 max((lap.start_time_ms - chart_start_ms) / 1000.0, 0.0),

@@ -196,7 +196,14 @@ def test_chart_axis_includes_authoritative_maximum():
     assert hi > 10.0
 
 
-def test_each_active_signal_gap_fragments_chart_and_laps():
+def test_brief_active_signal_gaps_do_not_fragment_chart_or_laps():
+    """A sub-five-second inactive gap stays one lap and one continuous line.
+
+    The two active bursts are separated by two inactive seconds, below the fixed
+    five-second meaningful pause, so they group into a single free lap with one
+    unbroken chart line. Inactive rows still contribute no active time and their
+    heart-rate spike (220) never enters the active maximum.
+    """
     columns = COLUMNS
     actives = [1, 1, 1, 0, 0, 1, 1, 1]
     rows = []
@@ -218,11 +225,51 @@ def test_each_active_signal_gap_fragments_chart_and_laps():
         )
     summary = compute_summary(Table(columns, rows))
     assert summary.active_time_s == 6.0
-    assert len(summary.laps) == 2
+    assert len(summary.laps) == 1
     assert len(summary.series_t) == 6
-    assert summary.series_breaks == [True, False, False, True, False, False]
+    assert summary.series_breaks == [True, False, False, False, False, False]
     assert summary.max_hr == 127
-    print("test_brief_active_signal_gaps_do_not_fragment_chart_or_laps passed")
+    print("  ok: brief active-signal gaps do not fragment the chart or laps")
+
+
+def test_run_start_anchor_matches_lap_distance_and_timer_start():
+    """Each run's chart line begins at its start boundary on both axes (D020).
+
+    Records are plotted at the end of their sample window, so without an anchor a
+    run's drawn line starts one window in and understates its span versus the lap
+    table. The anchors reintroduce the run-start boundary: the timer START (window
+    start time) and the cumulative distance preceding the first window — including
+    the odometer jump credited to the first active record after a pause.
+    """
+    columns = COLUMNS
+    actives = [1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1]
+    # Odometer frozen through the pause, then a 4 m jump credited to the resume.
+    distances = [2, 4, 6, 6, 6, 6, 6, 6, 10, 12, 14]
+    rows = [
+        {
+            **_row(i, hr=150, distance=float(distances[i]),
+                   speed=3.0 if active else 0.0),
+            "active": active,
+            "sample_duration": 1,
+        }
+        for i, active in enumerate(actives)
+    ]
+    summary = compute_summary(Table(columns, rows))
+
+    # Two active runs split by a five-second pause; totals unchanged by anchors.
+    assert [round(lap.distance_m, 3) for lap in summary.laps] == [6.0, 8.0]
+    starts = [k for k, brk in enumerate(summary.series_breaks) if brk]
+    assert starts == [0, 3]
+    # Distance anchor is each run's start distance: 0 m, then the pre-jump 6 m.
+    assert summary.series_anchor_distance[0] == 0.0
+    assert summary.series_anchor_distance[3] == 6.0
+    # Time anchor is each run's timer START (window start), not the window end.
+    assert summary.series_anchor_t[0] == 0.0
+    assert summary.series_anchor_t[3] == 8.0
+    # Drawn span (anchor -> last point) now equals the lap distance per run.
+    assert summary.series_distance[2] - summary.series_anchor_distance[0] == 6.0
+    assert summary.series_distance[5] - summary.series_anchor_distance[3] == 8.0
+    print("  ok: run-start anchors align chart spans with the lap table")
 
 
 def test_zone_time():
