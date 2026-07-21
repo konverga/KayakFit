@@ -267,8 +267,14 @@ def test_run_start_anchor_matches_lap_distance_and_timer_start():
     assert summary.series_anchor_t[0] == 0.0
     assert summary.series_anchor_t[3] == 8.0
     # Drawn span (anchor -> last point) now equals the lap distance per run.
-    assert summary.series_distance[2] - summary.series_anchor_distance[0] == 6.0
-    assert summary.series_distance[5] - summary.series_anchor_distance[3] == 8.0
+    first_end = summary.series_distance[2]
+    first_anchor = summary.series_anchor_distance[0]
+    second_end = summary.series_distance[5]
+    second_anchor = summary.series_anchor_distance[3]
+    assert first_end is not None and first_anchor is not None
+    assert second_end is not None and second_anchor is not None
+    assert first_end - first_anchor == 6.0
+    assert second_end - second_anchor == 8.0
     print("  ok: run-start anchors align chart spans with the lap table")
 
 
