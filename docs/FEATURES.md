@@ -211,7 +211,8 @@ Status: **Implemented**, with these explicit limitations:
 - Filters the loaded list by filename or workout type and supports Up/Down,
   Enter, and Escape keyboard navigation.
 - Converts CSV files to FIT.
-- Uploads CSV or FIT files to Strava.
+- Uploads CSV or FIT files through the connected Strava API, or opens Strava's
+  manual activity upload page in the default browser when the API is not connected.
 
 Status: **Implemented**. History is ordered by modification time rather than the
 recorded workout timestamp and has no pagination or delete action.

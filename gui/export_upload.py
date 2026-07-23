@@ -15,6 +15,8 @@ from app import secret_store
 from app.config import get_bool
 from app.events import UiEvent
 
+STRAVA_UPLOAD_URL = "https://www.strava.com/upload/select"
+
 # See gui/_mixin_base.py: type-checking-only shared surface for the composed GUI.
 if TYPE_CHECKING:
     from ._mixin_base import GuiSharedState as _MixinBase
@@ -33,6 +35,10 @@ class ExportUploadMixin(_MixinBase):
             webbrowser.open(
                 f"https://www.strava.com/activities/{self.export.strava_activity_id}"
             )
+
+    def _open_strava_upload(self) -> None:
+        """Open Strava's manual activity upload page in the default browser."""
+        webbrowser.open(STRAVA_UPLOAD_URL)
 
     def _export_args(self, path: str, upload: bool) -> dict[str, Any]:
         """Build the argument dict for the export/upload worker."""
@@ -66,9 +72,10 @@ class ExportUploadMixin(_MixinBase):
             return
         if upload and not self._strava_connected():
             self.log_message(
-                "Strava is not connected. Open Settings to connect first.\n"
+                "Strava API is not connected; opening Strava's manual upload page.\n"
             )
-            upload = False
+            self._open_strava_upload()
+            return
 
         prefix = "Auto-export: " if announce else ""
         self.log_message(

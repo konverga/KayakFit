@@ -138,7 +138,9 @@ no movement.
 use the search box to filter the loaded list by filename or workout type, click
 one to select it (the most recent is pre‑selected, double‑click opens its
 summary), and use the action bar at the bottom: **Summary** and **Save FIT**
-(CSV files), and **Upload** (CSV or FIT, needs a connected Strava account).
+(CSV files), and **Upload** (CSV or FIT). With a connected Strava API account,
+Upload sends the activity directly; otherwise it opens Strava's manual activity
+upload page in the default browser.
 **Open folder** reveals the files in Finder/Explorer, and **Choose file…** adds
 a workout stored somewhere else to the list so the same buttons work on it.
 

@@ -10,7 +10,8 @@ actions as a library workout.
 Button rules:
     - Summary:  CSV only (the summary is computed from the raw CSV log).
     - Save FIT: CSV only (a .fit file needs no conversion).
-    - Upload:   CSV or FIT, requires a connected Strava account.
+    - Upload:   CSV or FIT; opens Strava's manual upload page when its API is
+                not connected.
 
 UI-toolkit code only; all export/upload work is delegated back to the caller
 through the ``start_export`` callback so this window stays decoupled from the
@@ -179,7 +180,8 @@ def open_history_window(
         root: Parent window.
         workouts_dir: Directory containing recorded workouts.
         start_export: Callback ``(path, upload)`` that converts/uploads a file.
-        strava_connected: Whether the upload action should be enabled.
+        strava_connected: Whether Upload uses the API or opens Strava's manual
+            upload page.
         open_summary: Optional callback ``(path)`` that opens the workout
             summary screen for a CSV (the button is disabled when None).
     """
@@ -230,7 +232,6 @@ def open_history_window(
         info_group,
         text=f"Library: newest {_MAX_LISTED_WORKOUTS} workouts",
         text_color=_MUTED,
-        font=ctk.CTkFont(size=11),
     ).pack(side="left", padx=(0, 12))
     hint = ctk.CTkLabel(
         info_group,
@@ -301,9 +302,11 @@ def open_history_window(
             state="normal" if (is_csv and open_summary is not None) else "disabled"
         )
         save_fit_btn.configure(state="normal" if is_csv else "disabled")
-        upload_btn.configure(state="normal" if strava_connected else "disabled")
+        upload_btn.configure(state="normal")
         if not strava_connected:
-            hint.configure(text=f"{_display_name(path)}   ·   connect Strava to upload")
+            hint.configure(
+                text=f"{_display_name(path)}   ·   opens Strava's manual upload page"
+            )
         elif not is_csv:
             hint.configure(text=f"{_display_name(path)}   ·   already a FIT file")
         else:

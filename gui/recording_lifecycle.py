@@ -455,7 +455,7 @@ class RecordingLifecycleMixin(_MixinBase):
         # gaps between them even.
         if self.recording.csv_path and points > 0:
             self.savefit_btn.pack(side="right", padx=(0, 12), pady=12)
-            if self._strava_connected() and not self.recording.incomplete:
+            if not self.recording.incomplete:
                 self.upload_btn.pack(side="right", padx=(0, 12), pady=12)
             self.view_summary_btn.pack(side="right", padx=(0, 12), pady=12)
             self.discard_btn.pack(side="right", padx=(0, 12), pady=12)
