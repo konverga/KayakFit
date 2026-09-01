@@ -4,23 +4,23 @@ altgraph==0.17.5
     # via
     #   macholib
     #   pyinstaller
-ast-serialize==0.6.0
+ast-serialize==0.8.0
     # via mypy
-bitstruct==8.22.1
+bitstruct==8.23.0
     # via fit-tool
-bleak==2.0.0
+bleak==3.0.2
     # via kayakfit
-certifi==2026.6.17
+certifi==2026.7.22
     # via requests
-cffi==2.1.0 ; platform_python_implementation != 'PyPy' and sys_platform == 'linux'
+cffi==2.1.1 ; platform_python_implementation != 'PyPy' and sys_platform == 'linux'
     # via cryptography
-charset-normalizer==3.4.9
+charset-normalizer==3.5.1
     # via requests
 colorama==0.4.6 ; sys_platform == 'win32'
     # via pytest
-cryptography==49.0.0 ; sys_platform == 'linux'
+cryptography==50.0.1 ; sys_platform == 'linux'
     # via secretstorage
-customtkinter==5.2.2
+customtkinter==6.0.0
     # via kayakfit
 darkdetect==0.8.0
     # via customtkinter
@@ -28,9 +28,9 @@ dbus-fast==5.0.22 ; sys_platform == 'linux'
     # via bleak
 et-xmlfile==2.0.0
     # via openpyxl
-fit-tool==0.9.15
+fit-tool==0.9.16
     # via kayakfit
-idna==3.18
+idna==3.19
     # via requests
 iniconfig==2.3.0
     # via pytest
@@ -38,15 +38,15 @@ jaraco-classes==3.4.0
     # via keyring
 jaraco-context==6.1.2
     # via keyring
-jaraco-functools==4.5.0
+jaraco-functools==4.6.0
     # via keyring
 jeepney==0.9.0 ; sys_platform == 'linux'
     # via
     #   keyring
     #   secretstorage
-keyring==25.6.0
+keyring==25.7.0
     # via kayakfit
-librt==0.13.0 ; platform_python_implementation != 'PyPy'
+librt==0.15.0 ; platform_python_implementation != 'PyPy'
     # via mypy
 macholib==1.16.4 ; sys_platform == 'darwin'
     # via pyinstaller
@@ -54,12 +54,12 @@ more-itertools==11.1.0
     # via
     #   jaraco-classes
     #   jaraco-functools
-mypy==2.2.0
+mypy==2.3.1
 mypy-extensions==1.1.0
     # via mypy
 openpyxl==3.1.5
     # via fit-tool
-packaging==26.2
+packaging==26.3
     # via
     #   customtkinter
     #   pyinstaller
@@ -73,24 +73,24 @@ pluggy==1.6.0
     # via pytest
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' and sys_platform == 'linux'
     # via cffi
-pygments==2.20.0
+pygments==2.21.0
     # via pytest
-pyinstaller==6.21.0
-pyinstaller-hooks-contrib==2026.6
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7
     # via pyinstaller
-pyobjc-core==12.2.1 ; sys_platform == 'darwin'
+pyobjc-core==12.2.2 ; sys_platform == 'darwin'
     # via
     #   bleak
     #   pyobjc-framework-cocoa
     #   pyobjc-framework-corebluetooth
     #   pyobjc-framework-libdispatch
-pyobjc-framework-cocoa==12.2.1 ; sys_platform == 'darwin'
+pyobjc-framework-cocoa==12.2.2 ; sys_platform == 'darwin'
     # via
     #   pyobjc-framework-corebluetooth
     #   pyobjc-framework-libdispatch
-pyobjc-framework-corebluetooth==12.2.1 ; sys_platform == 'darwin'
+pyobjc-framework-corebluetooth==12.2.2 ; sys_platform == 'darwin'
     # via bleak
-pyobjc-framework-libdispatch==12.2.1 ; sys_platform == 'darwin'
+pyobjc-framework-libdispatch==12.2.2 ; sys_platform == 'darwin'
     # via bleak
 pytest==9.1.1
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
@@ -99,16 +99,16 @@ pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
     #   pyinstaller
 pyyaml==6.0.3
     # via kayakfit
-requests==2.33.0
+requests==2.34.2
     # via kayakfit
-ruff==0.15.21
+ruff==0.16.5
 secretstorage==3.5.0 ; sys_platform == 'linux'
     # via keyring
-setuptools==83.0.0
+setuptools==84.0.0
     # via pyinstaller
 types-pyyaml==6.0.12.20250915
-types-requests==2.32.4.20250913
-types-setuptools==80.9.0.20250822
+types-requests==2.33.0.20260712
+types-setuptools==84.0.0.20260812
 typing-extensions==4.16.0
     # via
     #   mypy
