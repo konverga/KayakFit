@@ -21,12 +21,12 @@ requires-python = ">=3.14"
 # environment markers, so they are resolved into uv.lock automatically rather
 # than being listed here.
 dependencies = [
-    "bleak==2.0.0",
-    "customtkinter==5.2.2",
-    "fit-tool==0.9.15",
-    "keyring==25.6.0",
+    "bleak==3.0.2",
+    "customtkinter==6.0.0",
+    "fit-tool==0.9.16",
+    "keyring==25.7.0",
     "PyYAML==6.0.3",
-    "requests==2.33.0",
+    "requests==2.34.2",
 ]
 
 [project.urls]
@@ -39,16 +39,16 @@ Repository = "https://github.com/konverga/KayakFit.git"
 # Lint, type check and test tooling plus the type stubs mypy reads. Installed by
 # a default `uv sync`; build/dev-time only — PyInstaller never bundles them.
 dev = [
-    "ruff==0.15.21",
-    "mypy==2.2.0",
+    "ruff==0.16.9",
+    "mypy==2.3.1",
     "pytest>=9.0.3,<10",
     "types-PyYAML==6.0.12.20250915",
-    "types-requests==2.32.4.20250913",
-    "types-setuptools==80.9.0.20250822",
+    "types-requests==2.33.0.20260906",
+    "types-setuptools==84.0.0.20260812",
 ]
 # PyInstaller and its hook helpers — used only to build the desktop bundles, so
 # they are kept out of the default dev install (`uv sync --group build`).
-build = ["pyinstaller==6.21.0", "pyinstaller-hooks-contrib==2026.6"]
+build = ["pyinstaller==6.21.0", "pyinstaller-hooks-contrib==2026.7"]
 
 [tool.uv]
 # KayakFit is a desktop app run from source (`uv run python kayakfit_gui.py`)
